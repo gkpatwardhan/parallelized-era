@@ -485,32 +485,6 @@ do_rcv_fft_work(unsigned num_fft_frames, fx_pt1 fft_ar_r[FRAME_EQ_IN_MAX_SIZE], 
  * This routine manages the transmit pipeline functions and components
  ********************************************************************************/
 
-void pre_process_input_for_compute_(float *recvd_in_imag, size_t recvd_in_imag_sz,
-                                    float *recvd_in_real, size_t recvd_in_real_sz,
-                                    int num_recvd_vals,
-                                    fx_pt *input_data_arg /*= input_data -> global*/, size_t input_data_arg_sz /*=DELAY_16_MAX_OUT_SIZE - 16*/)
-{
-#if defined(HPVM) && true
-  void *Section_Inner = __hetero_section_begin();
-  void *T0 = __hetero_task_begin(4, input_data_arg, input_data_arg_sz,
-                                 recvd_in_real, recvd_in_real_sz,
-                                 recvd_in_imag, recvd_in_imag_sz,
-                                 num_recvd_vals,
-                                 1, input_data_arg, input_data_arg_sz, "process_input_to_compute_task");
-#endif
-  DEBUG(printf("In do_recv_pipeline: num_received_vals = %u\n", num_recvd_vals); fflush(stdout));
-  for (int i = 0; i < num_recvd_vals; i++)
-  { // HPVM: This for-loop can be parallelized
-    input_data_arg[i] = recvd_in_real[i] + I * recvd_in_imag[i];
-  }
-  DEBUG(printf("Calling compute\n"));
-
-#if defined(HPVM) && true
-  __hetero_task_end(T0);
-  __hetero_section_end(Section_Inner);
-#endif
-}
-
 void do_recv_pipeline(int num_recvd_vals, float *recvd_in_real, size_t recvd_in_real_sz,
                       float *recvd_in_imag, size_t recvd_in_imag_sz,
                       int *recvd_msg_len, size_t recvd_msg_len_sz, char *recvd_msg, size_t recvd_msg_sz,
@@ -551,13 +525,28 @@ void do_recv_pipeline(int num_recvd_vals, float *recvd_in_real, size_t recvd_in_
                                           recvd_in_imag, recvd_in_imag_sz,
                                           num_recvd_vals,
                                           1, input_data_arg, input_data_arg_sz, "process_input_to_compute_Wrapper1_task");
-  // HPVM: There is a for-loop in pre_process_input_for_compute_() which can be easily parallelized
+
+//  void * Section_Loop_Wrapper = __hetero_section_begin();
 #endif
 
-  pre_process_input_for_compute_(recvd_in_imag, recvd_in_imag_sz, recvd_in_real, recvd_in_real_sz,
-                                 num_recvd_vals, input_data_arg, input_data_arg_sz);
+#if !defined(HPVM)
+  DEBUG(printf("In do_recv_pipeline: num_received_vals = %u\n", num_recvd_vals); fflush(stdout));
+#endif
+  for (int i = 0; i < num_recvd_vals; i++) { // HPVM: This for-loop can NOT be parallelized as the number of iterations is not a literal
+	  /*__hetero_parallel_loop(1, 4, input_data_arg, input_data_arg_sz,
+                                          recvd_in_real, recvd_in_real_sz,
+                                          recvd_in_imag, recvd_in_imag_sz,
+                                          num_recvd_vals,
+                                          1, input_data_arg, input_data_arg_sz); */
+    input_data_arg[i] = recvd_in_real[i] + I * recvd_in_imag[i];
+  }
+#if !defined(HPVM)
+  DEBUG(printf("Calling compute\n"));
+#endif
 
 #if defined(HPVM) && true
+//  __hetero_section_end(Section_Loop_Wrapper);
+
   __hetero_task_end(T0_Wrapper1);
 #endif
 

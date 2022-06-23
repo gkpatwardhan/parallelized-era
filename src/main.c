@@ -16,7 +16,7 @@
 #define HPVM_PROCESS_LIDAR
 #define HPVM_PROCESS_LIDAR_INTERNAL
 #define HPVM_RECV_PIPELINE
-#define RECV_CALLER
+//#define RECV_CALLER
 
 #include "globals.h"
 #include "debug.h"
@@ -362,7 +362,7 @@ void decompress(unsigned char *uncmp_data, size_t uncmp_data_sz,
 #endif
 
   DEBUG(printf("Recevied %d decoded bytes from the wifi...\n", *dec_bytes));
-  Costmap2D *remote_map = (Costmap2D *)&(uncmp_data); // Convert "type" to Costmap2D
+  Costmap2D *remote_map = (Costmap2D *)(uncmp_data); // Convert "type" to Costmap2D
 
   DBGOUT(printf("  Back from LZ4_decompress_safe with %u decompressed bytes\n", *dec_bytes);
          printf("  Remote CostMAP: AV x %lf y %lf z %lf\n", remote_map->av_x, remote_map->av_y,
@@ -373,7 +373,7 @@ void decompress(unsigned char *uncmp_data, size_t uncmp_data_sz,
 
   // Get the current local-map
   printf("Receive step %u : Processing fusion for curr_obs = %d\n", recv_count, curr_obs);
-  Costmap2D *local_map = &(observations[curr_obs].master_costmap);
+  Costmap2D *local_map = &(observations->master_costmap);
 
 #ifdef WRITE_ASCII_MAP
   char ascii_file_name[32];
@@ -408,31 +408,27 @@ void decompress_caller(unsigned char *uncmp_data, size_t uncmp_data_sz,
                        int *dec_bytes, size_t dec_bytes_sz,
                        Observation *observation, size_t observation_sz)
 {
-#if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && defined(RECV_CALLER) && true
-  void *Section_Caller = __hetero_section_begin();
-  void *T2_Wrapper = __hetero_task_begin(5, uncmp_data, uncmp_data_sz, recvd_msg_len, recvd_msg_len_sz,
-                                         recvd_msg, recvd_msg_sz, dec_bytes, dec_bytes_sz,
-                                         observation, observation_sz,
-                                         2, uncmp_data, uncmp_data_sz, dec_bytes, dec_bytes_sz, "decompress_task_Wrapper2");
-#endif
-
-  decompress(uncmp_data, uncmp_data_sz, recvd_msg_len, recvd_msg_len_sz, recvd_msg,
-             recvd_msg_sz, dec_bytes, dec_bytes_sz,
-             observation, observation_sz);
-
-#if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && defined(RECV_CALLER) && true
-  __hetero_task_end(T2_Wrapper);
-  __hetero_section_end(Section_Caller);
-#endif
 }
 
-void grid_fusion(Observation *observations, size_t observations_sz,
-                 unsigned char *uncmp_data, size_t uncmp_data_sz)
+__attribute__((noinline)) void grid_fusion(Observation *observations, size_t observations_sz,
+                 unsigned char *uncmp_data, size_t uncmp_data_sz,
+                 int *input_y_min, size_t input_y_min_sz /*sizeof(int)*/,
+                 int *input_x_min, size_t input_x_min_sz /*sizeof(int)*/,
+                 int *local_y_min, size_t local_y_min_sz /*sizeof(int)*/,
+                 int *local_y_max, size_t local_y_max_sz /*sizeof(int)*/,
+                 int *local_x_min, size_t local_x_min_sz /*sizeof(int)*/,
+                 int *local_x_max, size_t local_x_max_sz /*sizeof(int)*/,
+                 int *local_x_cells, size_t local_x_cells_sz /*sizeof(int)*/,
+                 int *input_x_cells, size_t input_x_cells_sz /*sizeof(int)*/)
 {
 
 #if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
   void *Section_Inner = __hetero_section_begin();
-  void *T4 = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
+  void *T4 = __hetero_task_begin(10, observations, observations_sz, uncmp_data, uncmp_data_sz,
+                                 input_y_min, input_y_min_sz, input_x_min, input_x_min_sz,
+                                 local_y_min, local_y_min_sz, local_y_max, local_y_max_sz,
+                                 local_x_min, local_x_min_sz, local_x_max, local_x_max_sz,
+                                 local_x_cells, local_x_cells_sz, input_x_cells, input_x_cells_sz,
                                  1, observations, observations_sz, "gridFusion_task");
 
   // HPVM: Nested inside this task is a call to fuseIntoLocal() function. This function has a for-loop
@@ -443,33 +439,46 @@ void grid_fusion(Observation *observations, size_t observations_sz,
   //      In the first part, the load all the values they will need in the for-loop
   //      The second part is the for-loop which initializes the argument array local_map_cp. This loop can
   //        be parallelized
+  // Status: fuseIntoLocal() has been split up into tasks; just the parallel loop markers need to be put in
 #endif
 
   // Then we should "Fuse" the received GridMap with our local one
   //  We need to "peel out" the remote odometry data from somewhere (in the message?)
-  // unsigned char* combineGrids(unsigned char* grid1, unsigned char* grid2, double robot_x1, double robot_y1,
+#if !(defined(HPVM) || defined(HPVM_RECV_PIPELINE))
   DBGOUT(printf("\nCalling combineGrids...\n"));
+#endif
   // Note: The direction in which this is called is slightly significant:
   //  The first map is copied into the second map, in this case remote into local,
   //  and the x_dim, et.c MUST correspond to that second map (here local)
-#ifdef INT_TIME
+#if defined(INT_TIME) && !(defined(HPVM) || defined(HPVM_RECV_PIPELINE))
   gettimeofday(&start_pd_combGrids, NULL);
 #endif
-  // Copied the following two variable above task; this wasn't being modified in the above task so
-  // just copying it down should be safe
-  Costmap2D *local_map_cp = &(observations[curr_obs].master_costmap);
-  Costmap2D *remote_map_cp = (Costmap2D *)(uncmp_data); // Convert "type" to Costmap2D
-  fuseIntoLocal(local_map_cp, remote_map_cp);
+
+  fuseIntoLocal(observations, observations_sz, uncmp_data, uncmp_data_sz);
+                
+
   /*combineGrids(remote_map->costmap, local_map->costmap,
     remote_map->av_x, remote_map->av_y,
     local_map->av_x, local_map->av_y,
     local_map->x_dim, local_map->y_dim, local_map->cell_size);
     */
-#ifdef INT_TIME
+#if defined(INT_TIME) && !(defined(HPVM) || defined(HPVM_RECV_PIPELINE))
   gettimeofday(&stop_pd_combGrids, NULL);
   pd_combGrids_sec += stop_pd_combGrids.tv_sec - start_pd_combGrids.tv_sec;
   pd_combGrids_usec += stop_pd_combGrids.tv_usec - start_pd_combGrids.tv_usec;
 #endif
+
+#if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
+  __hetero_task_end(T4);
+#endif
+
+#if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
+  void *T5 = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
+                                 1, observations, observations_sz, "logging_task");
+#endif
+
+  Costmap2D *local_map_cp = &(observations->master_costmap);
+
 #ifdef WRITE_ASCII_MAP
   char ascii_file_name[32];
   snprintf(ascii_file_name, sizeof(char) * 32, "%s%04d.txt", ASCII_FN, ascii_counter);
@@ -496,28 +505,27 @@ void grid_fusion(Observation *observations, size_t observations_sz,
   write_array_to_file(local_map_cp->costmap, COST_MAP_ENTRIES);
 #endif
 
+
 #if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
-  __hetero_task_end(T4);
+  __hetero_task_end(T5);
+#endif
+
+#if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
   __hetero_section_end(Section_Inner);
 #endif
 }
 
 void grid_fusion_caller(Observation *observations, size_t observations_sz,
-                        unsigned char *uncmp_data, size_t uncmp_data_sz)
+                        unsigned char *uncmp_data, size_t uncmp_data_sz,
+                        int *input_y_min, size_t input_y_min_sz /*sizeof(int)*/,
+                        int *input_x_min, size_t input_x_min_sz /*sizeof(int)*/,
+                        int *local_y_min, size_t local_y_min_sz /*sizeof(int)*/,
+                        int *local_y_max, size_t local_y_max_sz /*sizeof(int)*/,
+                        int *local_x_min, size_t local_x_min_sz /*sizeof(int)*/,
+                        int *local_x_max, size_t local_x_max_sz /*sizeof(int)*/,
+                        int *local_x_cells, size_t local_x_cells_sz /*sizeof(int)*/,
+                        int *input_x_cells, size_t input_x_cells_sz /*sizeof(int)*/)
 {
-
-#if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && defined(RECV_CALLER) && true
-  void *Section_Caller = __hetero_section_begin();
-  void *T4_Caller = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
-                                        1, observations, observations_sz, "gridFusion_task_wrapper2");
-#endif
-
-  grid_fusion(observations, observations_sz, uncmp_data, uncmp_data_sz);
-
-#if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && defined(RECV_CALLER) && true
-  __hetero_task_end(T4_Caller);
-  __hetero_section_end(Section_Caller);
-#endif
 }
 void fuse_maps(int n_recvd_in,
                float *recvd_in_real, size_t recvd_in_real_sz,
@@ -541,7 +549,7 @@ void fuse_maps(int n_recvd_in,
                fx_pt *equalized, size_t equalized_sz,
                unsigned *num_eq_out_bits, size_t num_eq_out_bits_sz,
                unsigned *psdu, size_t psdu_sz,
-               //              Global variables used by do_recv_pipeline
+               //       Global variables used by do_recv_pipeline
                fx_pt *delay16_out_arg /*= delay16_out -> global*/, size_t delay16_out_arg_sz /*= DELAY_16_MAX_OUT_SIZE*/,
                fx_pt *input_data_arg /*= input_data -> global*/, size_t input_data_sz /*=DELAY_16_MAX_OUT_SIZE - 16*/,
                fx_pt *cmpx_conj_out_arg /*= cmpx_conj_out -> global*/, size_t cmpx_conj_out_arg_sz /*= CMP_CONJ_MAX_SIZE*/,
@@ -552,8 +560,17 @@ void fuse_maps(int n_recvd_in,
                fx_pt1 *avg_signal_power_arg /*= avg_signal_power -> global*/, size_t avg_signal_power_arg_sz /*= FIR_MAVG64_MAX_SIZE*/,
                fx_pt1 *the_correlation_arg /*= the_correlation -> global*/, size_t the_correlation_arg_sz /*= DIVIDE_MAX_SIZE*/,
                fx_pt *sync_short_out_frames_arg /*= sync_short_out_frames -> global*/, size_t sync_short_out_frames_arg_sz /*=320*/,
-               fx_pt *d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/
-                                                                                                                              // End variables used by do_recv_pipeline
+               fx_pt *d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+               // End variables used by do_recv_pipeline
+               // Start variables used by gridfusion (passed to fuseIntoLocal)
+               int *input_y_min, size_t input_y_min_sz /*sizeof(int)*/,
+               int *input_x_min, size_t input_x_min_sz /*sizeof(int)*/,
+               int *local_y_min, size_t local_y_min_sz /*sizeof(int)*/,
+               int *local_y_max, size_t local_y_max_sz /*sizeof(int)*/,
+               int *local_x_min, size_t local_x_min_sz /*sizeof(int)*/,
+               int *local_x_max, size_t local_x_max_sz /*sizeof(int)*/,
+               int *local_x_cells, size_t local_x_cells_sz /*sizeof(int)*/,
+               int *input_x_cells, size_t input_x_cells_sz /*sizeof(int)*/
 )
 {
 #if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
@@ -644,31 +661,29 @@ void fuse_maps(int n_recvd_in,
 
   // HPVM: There are no for-loop inside this task and there seems to be dependencies within code portions on this
   // task, thus it has little scope for parallelism.
-#if defined(RECV_CALLER)
-  decompress_caller(uncmp_data, uncmp_data_sz, recvd_msg_len, recvd_msg_len_sz,
-                    recvd_msg, recvd_msg_sz, dec_bytes, dec_bytes_sz,
-                    observations, observations_sz);
-#else
   decompress(uncmp_data, uncmp_data_sz, recvd_msg_len, recvd_msg_len_sz,
              recvd_msg, recvd_msg_sz, dec_bytes, dec_bytes_sz,
              observations, observations_sz);
-#endif
 
 #if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
   __hetero_task_end(T2_Wrapper1);
 #endif
 
 #if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
-  void *T4_Wrapper1 = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
+  void *T4_Wrapper1 = __hetero_task_begin(10, observations, observations_sz, uncmp_data, uncmp_data_sz,
+                                          input_y_min, input_y_min_sz, input_x_min, input_x_min_sz,
+                                          local_y_min, local_y_min_sz, local_y_max, local_y_max_sz,
+                                          local_x_min, local_x_min_sz, local_x_max, local_x_max_sz,
+                                          local_x_cells, local_x_cells_sz, input_x_cells, input_x_cells_sz,
                                           1, observations, observations_sz, "gridFusion_task_Wrapper1");
 #endif
 
   // HPVM: Nested inside this task is a for-loop that can be parallelized
-#if defined(RECV_CALLER)
-  grid_fusion_caller(observations, observations_sz, uncmp_data, uncmp_data_sz);
-#else
-  grid_fusion(observations, observations_sz, uncmp_data, uncmp_data_sz);
-#endif
+  grid_fusion(observations, observations_sz, uncmp_data, uncmp_data_sz,
+              input_y_min, input_y_min_sz, input_x_min, input_x_min_sz,
+              local_y_min, local_y_min_sz, local_y_max, local_y_max_sz,
+              local_x_min, local_x_min_sz, local_x_max, local_x_max_sz,
+              local_x_cells, local_x_cells_sz, input_x_cells, input_x_cells_sz);
 
 #if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
   __hetero_task_end(T4_Wrapper1);
@@ -833,17 +848,27 @@ void *receive_and_fuse_maps_impl(Observation *observations /*=observations -> gl
       unsigned psdu = 0;
       size_t psdu_sz = sizeof(unsigned);
 
+      // Variables to be passed into fuseIntoLocal through decompress_map
+      int input_y_min = 0;
+      int input_x_min = 0;
+      int local_y_min = 0;
+      int local_y_max = 0;
+      int local_x_min = 0;
+      int local_x_max = 0;
+      int local_x_cells = 0;
+      int input_x_cells = 0;
+
       printf("%s %d Calling fuse_maps", __FILE__, __LINE__);
 
 #if (defined(HPVM) || defined(HPVM_RECV_PIPELINE)) && true
       // 31 inputs, 7 outputs
-      void *LaunchInner = __hetero_launch((void *)fuse_maps, 31,
+      void *LaunchInner = __hetero_launch((void *)fuse_maps, 39,
                                           n_recvd_in,
                                           recvd_in_real, recvd_in_real_sz,
                                           recvd_in_imag, recvd_in_imag_sz,
                                           &recvd_msg_len, recvd_msg_len_sz,
                                           recvd_msg, recvd_msg_sz,
-                                          observations, observations_sz,
+                                          &observations[curr_obs], observations_sz / 2,
                                           uncmp_data, uncmp_data_sz,
                                           &dec_bytes, dec_bytes_sz,
                                           // Local variables used by do_recv_pipeline
@@ -859,7 +884,7 @@ void *receive_and_fuse_maps_impl(Observation *observations /*=observations -> gl
                                           equalized, equalized_sz,
                                           &num_eq_out_bits, num_eq_out_bits_sz,
                                           &psdu, psdu_sz,
-                                          //      Global variables used by do_recv_pipeline
+                                          // Global variables used by do_recv_pipeline
                                           delay16_out, DELAY_16_MAX_OUT_SIZE * sizeof(fx_pt),
                                           input_data, (DELAY_16_MAX_OUT_SIZE - 16) * sizeof(fx_pt),
                                           cmpx_conj_out, CMP_CONJ_MAX_SIZE * sizeof(fx_pt),
@@ -872,19 +897,27 @@ void *receive_and_fuse_maps_impl(Observation *observations /*=observations -> gl
                                           sync_short_out_frames, 320 * sizeof(fx_pt),
                                           d_sync_long_out_frames, SYNC_L_OUT_MAX_SIZE * sizeof(fx_pt),
                                           // End variables used by do_recv_pipeline
-                                          6,
-                                          recvd_in_real, recvd_in_real_sz,
+                                          // Variales used by decompress_map
+                                          &input_y_min, sizeof(int),
+                                          &input_x_min, sizeof(int),
+                                          &local_y_min, sizeof(int),
+                                          &local_y_max, sizeof(int),
+                                          &local_x_min, sizeof(int),
+                                          &local_x_max, sizeof(int),
+                                          &local_x_cells, sizeof(int),
+                                          &input_x_cells, sizeof(int),
+                                          6, recvd_in_real, recvd_in_real_sz,
                                           recvd_in_imag, recvd_in_imag_sz,
                                           &recvd_msg_len, recvd_msg_len_sz,
                                           uncmp_data, uncmp_data_sz,
-                                          observations, observations_sz,
+                                          &observations[curr_obs], observations_sz / 2,
                                           &dec_bytes, dec_bytes_sz);
       __hetero_wait(LaunchInner);
 #else
     fuse_maps(n_recvd_in,
               recvd_in_real, recvd_in_real_sz, recvd_in_imag, recvd_in_imag_sz,
               &recvd_msg_len, recvd_msg_len_sz, recvd_msg, recvd_msg_sz,
-              observations, observations_sz,
+              &observations[curr_obs], observations_sz / 2,
               uncmp_data, uncmp_data_sz, &dec_bytes, dec_bytes_sz,
               // Local variables used by do_recv_pipeline
               scrambled_msg, scrambled_msg_sz, &ss_freq_offset, ss_freq_offset_sz,
@@ -1198,10 +1231,10 @@ void process_lidar_to_occgrid(lidar_inputs_t *lidar_inputs, size_t lidarin_sz /*
 #if (defined(HPVM) || defined(HPVM_PROCESS_LIDAR_INTERNAL)) && true
     void *T3_cloudToOccgrid_Task = __hetero_task_begin(3, observationVal, observations_sz, lidar_inputs, lidarin_sz,
                                                        AVxyzw, AVxyzw_sz, 1, observationVal, observations_sz, "updateBounds_task");
-    // HPVM: updateBounds() has two for-loop. One is within updateBounds() and another is present in raytraceFreespace() which is 
+    // HPVM: updateBounds() has two for-loop. One is within updateBounds() and another is present in raytraceFreespace() which is
     // called by updateBounds().
-    // The for-loop in updateBounds() can probably be parallelized. The for-loop in raytraceFreespace() however needs some 
-    // investigation so see if it can be parallelized (see the comment I placed right above the for-loop in raytraceFreespace(); I 
+    // The for-loop in updateBounds() can probably be parallelized. The for-loop in raytraceFreespace() however needs some
+    // investigation so see if it can be parallelized (see the comment I placed right above the for-loop in raytraceFreespace(); I
     // mention the roadblocks in parallelizing this for-loop in that comment)
 #endif
     {
@@ -2612,3 +2645,4 @@ void dump_final_run_statistics()
 }
 
 #undef HPVM
+

@@ -66,7 +66,7 @@ hpvm-gpu: CFLAGS += -DHPVM -DDEVICE=GPU_TARGET -DGPU
 hpvm-gpu: BACKEND_LOAD = -load LLVMDFG2LLVM_CPU.so
 hpvm-gpu: BACKEND_FLAG = -load LLVMLocalMem.so -load LLVMDFG2LLVM_OpenCL.so -load LLVMDFG2LLVM_CPU.so -load LLVMDFG2LLVM_OpenCL.so -localmem -dfg2llvm-cpu
 
-OPT_FLAGS = -enable-new-pm=0  --debug -inline -load HPVMGenHPVM.so -genhpvm -globaldce -hpvm-timers-gen -load HPVMBuildDFG.so 
+OPT_FLAGS = -enable-new-pm=0  -inline -load HPVMGenHPVM.so -genhpvm -globaldce -dce -hpvm-timers-gen -load HPVMBuildDFG.so 
 
 hpvm-cpu: OPT_FLAGS += -load HPVMDFG2LLVM_CPU.so -load HPVMClearDFG.so -load HPVMDFGTransformPasses.so  -sequentializeflatten -dfg2llvm-cpu -clearDFG -hpvm-timers-cpu 
 hpvm-gpu: OPT_FLAGS += -load HPVMLocalMem.so -load HPVMDFG2LLVM_GPU_OCL.so -load HPVMDFG2LLVM_CPU.so -load HPVMClearDFG.so  -localmem -dfg2llvm-gpu-ocl -dfg2llvm-cpu -clearDFG -hpvm-timers-cpu -hpvm-timers-ptx 

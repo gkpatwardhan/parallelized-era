@@ -29,7 +29,7 @@ extern fx_pt frame_d[DELAY_320_MAX_OUT_SIZE]; // delay320 output
 extern fx_pt* sync_short_out_frames;
 extern fx_pt d_sync_long_out_frames[SYNC_L_OUT_MAX_SIZE]; // sync_long_output
 
-uint8_t  decoded_message[MAX_PAYLOAD_SIZE];   // Holds the resulting decodede message.
+extern uint8_t  decoded_message[MAX_PAYLOAD_SIZE];   // Holds the resulting decodede message.
 
 // The input data goes through a delay16 that simply re-indexes the data (prepending 16 0+0i values)...
 extern fx_pt* input_data;
