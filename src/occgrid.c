@@ -12,9 +12,10 @@
 #include "hetero.h"
 #endif
 
-#define FuseIntoLocalHPVM
-
+//#define FuseIntoLocalHPVM
+//#define UpdateBoundsHPVM
 #undef HPVM
+
 
 #ifdef INT_TIME
 /* This is OCC-GRID Internal Timing information (gathering resources) */
@@ -59,11 +60,8 @@ uint64_t ocgr_upBd_regObst_usec = 0LL;
 
 /** FORWARD DECLARATIONS **/
 // void touch(double x, double y, double* min_x, double* min_y, double* max_x, double* max_y);
-void updateBounds(Observation *obs_ptr, float *data, unsigned int data_size, double robot_x, double robot_y,
-		double robot_z, double robot_yaw, double *min_x, double *min_y, double *max_x, double *max_y);
 
 void raytraceFreespace(Observation *obs_ptr, float *data, unsigned int data_size,
-		double *min_x, double *min_y, double *max_x, double *max_y,
 		double robot_x, double robot_y, double robot_z, double robot_yaw);
 /*void updateRaytraceBounds(double ox, double oy, double wx, double wy, double range,
   double* min_x, double* min_y, double* max_x, double* max_y);*/
@@ -263,109 +261,122 @@ void initCostmap(Observation *obs_ptr, bool rolling_window, double min_obstacle_
 
 /******************* FUNCTIONS *********************/
 
-void fuseIntoLocal(Observation *observations, size_t observations_sz, 
-		unsigned char *recievedData, size_t recievedData_sz) {
-#if defined(HPVM)  && defined(FuseIntoLocalHPVM)
+void fuseIntoLocal(Observation *observations, size_t observations_sz,
+                unsigned char *uncmp_data, size_t uncmp_data_sz,
+		double local_av_x_, double local_av_y_, 
+		double input_av_x_, double input_av_y_, 
+		unsigned int local_x_dim_, unsigned int local_y_dim_, 
+		unsigned int input_x_dim_, unsigned int input_y_dim_, 
+		double local_cell_size_,
+		double input_cell_size_) {  
+#if defined(HPVM)  || defined(FuseIntoLocalHPVM)
 	void * Section = __hetero_section_begin();
 
-	void * Loop_Wrapper = __hetero_task_begin(2, observations, observations_sz, recievedData, recievedData_sz, 
-			1, observations, observations_sz, "fuseIntoLocal_LoopWrapper_Task");
+	void * Loop_Wrapper = __hetero_task_begin(12, observations, observations_sz, uncmp_data, uncmp_data_sz, 
+			local_av_x_, local_av_y_, input_av_x_, input_av_y_, local_x_dim_, local_y_dim_, input_x_dim_, input_y_dim_, 
+			local_cell_size_, input_cell_size_, 
+			2, observations, observations_sz, uncmp_data, uncmp_data_sz, "fuseIntoLocal_LoopWrapper_Task");
 
 	void * Loop_Section = __hetero_section_begin();
 #endif
 
-		int input_y_min; 
-		int input_x_min; 
-		int local_y_min; 
-		int local_y_max; 
-		int local_x_min; 
-		int local_x_max; 
-		int local_x_cells; 
-		int input_x_cells; 
+	int input_y_min; 
+	int input_x_min; 
+	int local_y_min; 
+	int local_y_max; 
+	int local_x_min; 
+	int local_x_max; 
+	int local_x_cells; 
+	int input_x_cells; 
 
-		// localMap is the persistent map fo local knowledge; inputMap is the new information to enter into the localMap
-		Costmap2D *theLocal = &(observations->master_costmap);
-		Costmap2D *theInput = (Costmap2D *)recievedData;
-		unsigned char *localMap = theLocal->costmap;
-		unsigned char *inputMap = theInput->costmap;
+	double local_av_x = local_av_x_;
+	double local_av_y = local_av_y_; 
+	double input_av_x = input_av_x_;
+	double input_av_y = input_av_y_; 
+	unsigned int local_x_dim = local_x_dim_;
+	unsigned int local_y_dim = local_y_dim_; 
+	unsigned int input_x_dim = input_x_dim_; 
+	unsigned int input_y_dim = input_y_dim_;
+	double local_cell_size = local_cell_size_; 
+	double input_cell_size = input_cell_size_;
 
-		// These are the "position" of the (center) of the map
-		int local_x_pos = (int)((float)theLocal->av_x / theLocal->cell_size);
-		int local_y_pos = (int)((float)theLocal->av_y / theLocal->cell_size);
-		int input_x_pos = (int)((float)theInput->av_x / theInput->cell_size);
-		int input_y_pos = (int)((float)theInput->av_y / theInput->cell_size);
+	// localMap is the persistent map fo local knowledge; inputMap is the new information to enter into the localMap
 
-		// These are the dimension (raw input) of the map
-		int local_x_dim = (observations->master_costmap).x_dim;
-		int local_y_dim = (observations->master_costmap).y_dim;
-		int input_x_dim = ((Costmap2D *)(recievedData))->x_dim;
-		int input_y_dim =  ((Costmap2D *)(recievedData))->y_dim;
+	// These are the "position" of the (center) of the map
+	int local_x_pos = (int)((float)local_av_x / local_cell_size);
+	int local_y_pos = (int)((float)local_av_y / local_cell_size);
+	int input_x_pos = (int)((float)input_av_x / input_cell_size);
+	int input_y_pos = (int)((float)input_av_y / input_cell_size);
 
-		// Thess are the number of costmap/gridmap "cells" (dimensionally)
-		local_x_cells = (local_x_dim / theLocal->cell_size);
-		int local_y_cells = (local_y_dim / theLocal->cell_size);
-		input_x_cells = (input_x_dim / theInput->cell_size);
-		int input_y_cells = (input_y_dim / theInput->cell_size);
+	// Thess are the number of costmap/gridmap "cells" (dimensionally)
+	local_x_cells = (local_x_dim / local_cell_size);
+	int local_y_cells = (local_y_dim / local_cell_size);
+	input_x_cells = (input_x_dim / input_cell_size);
+	int input_y_cells = (input_y_dim / input_cell_size);
 
+	// Express the local/input maps in terms of "Global Cell Coordinates"
+	int input_0_x = input_x_pos - (input_x_cells) / 2;
+	int input_0_y = input_y_pos - (input_x_cells) / 2;
+	int input_N_x = input_x_pos + (input_x_cells) / 2 - 1;
+	int input_N_y = input_y_pos + (input_x_cells) / 2 - 1;
 
-		// Express the local/input maps in terms of "Global Cell Coordinates"
-		int input_0_x = input_x_pos - (input_x_cells) / 2;
-		int input_0_y = input_y_pos - (input_x_cells) / 2;
-		int input_N_x = input_x_pos + (input_x_cells) / 2 - 1;
-		int input_N_y = input_y_pos + (input_x_cells) / 2 - 1;
-
-		int local_0_x = local_x_pos - (local_x_cells) / 2;
-		int local_0_y = local_y_pos - (local_x_cells) / 2;
-		int local_N_x = local_x_pos + (local_x_cells) / 2 - 1;
-		int local_N_y = local_y_pos + (local_x_cells) / 2 - 1;
-
-
-		// Now determine the (localized) X and Y cell dimensions that overlap
-		//  We compute the min and max X and Y as for a for loop: for (ix = x_min; ix < x_max; ix++)
-		input_x_min = MMAX(0, (local_0_x - input_0_x));
-		int input_x_max = (input_x_cells) - MMAX(0, (input_N_x - local_N_x));
-		input_y_min = MMAX(0, (local_0_y - input_0_y));
-		int input_y_max = input_y_cells - MMAX(0, (input_N_y - local_N_y));
-
-		local_x_min = MMAX(0, (input_0_x - local_0_x));
-		local_x_max = (local_x_cells) - MMAX(0, (local_N_x - input_N_x));
-		local_y_min = MMAX(0, (local_0_y, input_0_y));
-		local_y_max = local_y_cells - MMAX(0, (local_N_y - input_N_y));
+	int local_0_x = local_x_pos - (local_x_cells) / 2;
+	int local_0_y = local_y_pos - (local_x_cells) / 2;
+	int local_N_x = local_x_pos + (local_x_cells) / 2 - 1;
+	int local_N_y = local_y_pos + (local_x_cells) / 2 - 1;
 
 
-		// Iterate through grids and assign corresponding max value
-		// int iiy = input_y_min;
-		for (int wiy = 0; wiy < local_y_max - local_y_min; wiy++) { // TODO: HPVM: This loop can be parallellized
-			for (int wix = 0; wix < local_x_max - local_x_min; wix++) {
-#if defined(HPVM) && defined(FuseIntoLocalHPVM)
-				__hetero_parallel_loop(1, 2, 
-						observations, observations_sz,
-						recievedData, recievedData_sz, 1, observations, observations_sz);
+	// Now determine the (localized) X and Y cell dimensions that overlap
+	//  We compute the min and max X and Y as for a for loop: for (ix = x_min; ix < x_max; ix++)
+	input_x_min = MMAX(0, (local_0_x - input_0_x));
+	int input_x_max = (input_x_cells) - MMAX(0, (input_N_x - local_N_x));
+	input_y_min = MMAX(0, (local_0_y - input_0_y));
+	int input_y_max = input_y_cells - MMAX(0, (input_N_y - local_N_y));
+
+	local_x_min = MMAX(0, (input_0_x - local_0_x));
+	local_x_max = (local_x_cells) - MMAX(0, (local_N_x - input_N_x));
+	local_y_min = MMAX(0, (local_0_y, input_0_y));
+	local_y_max = local_y_cells - MMAX(0, (local_N_y - input_N_y));
+
+
+	// Iterate through grids and assign corresponding max value
+	// int iiy = input_y_min;
+	for (int wiy = 0; wiy < local_y_max - local_y_min; wiy++) { // TODO: HPVM: This loop can be parallellized
+		for (int wix = 0; wix < local_x_max - local_x_min; wix++) {
+#if (defined(HPVM) || defined(FuseIntoLocalHPVM)) 
+			__hetero_parallel_loop(1, 2, 
+					observations, observations_sz, uncmp_data, uncmp_data_sz
+					1, observations, observations_sz);
 #endif
 
-				int iiy = input_y_min + wiy;
-				int wbase = (wiy + local_y_min) * (local_x_cells);
-				int ibase = iiy * (input_x_cells);
+			int iiy = input_y_min + wiy;
+			int wbase = (wiy + local_y_min) * (local_x_cells);
+			int ibase = iiy * (input_x_cells);
 
-				int iix = input_x_min + wix;
-				int local_idx = wbase + (wix + local_x_min);
-				int input_idx = ibase + iix;
+			int iix = input_x_min + wix;
+			int local_idx = wbase + (wix + local_x_min);
+			int input_idx = ibase + iix;
 
-				CHECK(if ((local_idx < 0) || (local_idx >= COST_MAP_ENTRIES)) {
-						printf("ERROR : fuseIntoLocal local_idx outside bounds at %d vs 0 .. %d\n", local_idx, COST_MAP_ENTRIES);
-						});
-				CHECK(if ((input_idx < 0) || (input_idx >= COST_MAP_ENTRIES)) {
-						printf("ERROR : fuseIntoLocal input_idx outside bounds at %d vs 0 .. %d\n", input_idx, COST_MAP_ENTRIES);
-						});
-
-				localMap[local_idx] = MMAX(localMap[local_idx], inputMap[input_idx]);
+			CHECK(if ((local_idx < 0) || (local_idx >= COST_MAP_ENTRIES)) {
+					printf("ERROR : fuseIntoLocal local_idx outside bounds at %d vs 0 .. %d\n", local_idx, COST_MAP_ENTRIES);
+					});
+			CHECK(if ((input_idx < 0) || (input_idx >= COST_MAP_ENTRIES)) {
+					printf("ERROR : fuseIntoLocal input_idx outside bounds at %d vs 0 .. %d\n", input_idx, COST_MAP_ENTRIES);
+					});
 
 
-			}
+			observations->master_costmap.costmap[local_idx] =
+				MMAX(observations->master_costmap.costmap[local_idx], ((Costmap2D *) (uncmp_data))->costmap[input_idx]);
+
+
 		}
+	}
 
-#if defined(HPVM) && defined(FuseIntoLocalHPVM)
+#if defined(HPVM) || defined(FuseIntoLocalHPVM)
 	__hetero_section_end(Loop_Section);
+#endif
+
+#if defined(HPVM) || defined(FuseIntoLocalHPVM)
 	__hetero_task_end(Loop_Wrapper);
 	__hetero_section_end(Section);
 #endif
@@ -607,8 +618,7 @@ void cloudToOccgrid(Observation *obs_ptr, size_t obs_ptr_sz,
 			// printf("First Coordinate = <%f, %f>\n", *data, *(data+1));
 			// rotating_window = true; //Comment out if not rolling window
 
-			updateBounds(obs_ptr, data, data_size, robot_x, robot_y, robot_z,
-					*robot_yaw, &min_x, &min_y, &max_x, &max_y);
+			updateBounds(obs_ptr, obs_ptr_sz, lidar_inputs, lidar_inputs_sz, *robot_yaw, data_size);
 
 			// printMap();
 #ifdef INT_TIME
@@ -760,63 +770,89 @@ void copyMapRegion(Observation *obs_ptr, unsigned char *source_map,
 	}
 }
 
-void updateBounds(Observation *obs_ptr, float *data, unsigned int data_size, double robot_x, double robot_y,
-		double robot_z, double robot_yaw, double *min_x, double *min_y, double *max_x, double *max_y)
-{
-	// printf("(1) Number of elements : %d ... ", data_size);
-	// printf("First Coordinate = <%f, %f>\n", *data, *(data+1));
+void updateBounds(Observation *obs_ptr, size_t obs_ptr_sz, 
+		lidar_inputs_t *lidar_inputs, size_t lidar_inputs_sz /*=sizeof(lidar_inputs_t)*/, double robot_yaw, 
+		size_t lidar_data_size) {
+#if defined(HPVM) || defined(UpdateBoundsHPVM)
+	void* Section = __hetero_section_begin();
 
-#ifdef INT_TIME
+	void* raytraceFreespaceTask = __hetero_task_begin(4, obs_ptr, obs_ptr_sz, lidar_inputs, lidar_inputs_sz, lidar_data_size, robot_yaw,
+			1 , obs_ptr, obs_ptr_sz, "raytraceFreespace_task");
+#endif
+
+#if defined(INT_TIME) && !(defined(HPVM) || defined(UpdateBoundsHPVM))
 	gettimeofday(&ocgr_upBd_total_start, NULL);
 #endif
-	// raytrace free space
-	raytraceFreespace(obs_ptr, data, data_size, min_x, min_y, max_x, max_y, robot_x, robot_y,
-			robot_z, robot_yaw); // TODO: Reconfigure for 'cloud' parameter
-#ifdef INT_TIME
+	{
+		double robot_x = lidar_inputs->odometry[0];
+		double robot_y = lidar_inputs->odometry[1];
+		double robot_z = lidar_inputs->odometry[2];
+
+		float *data = (float *)(lidar_inputs->data);
+	
+		raytraceFreespace(obs_ptr, data, lidar_data_size, robot_x, robot_y, robot_z, robot_yaw); 
+	}
+
+#if defined(INT_TIME) && !(defined(HPVM) || defined(UpdateBoundsHPVM))
 	gettimeofday(&ocgr_upBd_rayFSp_stop, NULL);
 	ocgr_upBd_rayFSp_sec += ocgr_upBd_rayFSp_stop.tv_sec - ocgr_upBd_total_start.tv_sec;
 	ocgr_upBd_rayFSp_usec += ocgr_upBd_rayFSp_stop.tv_usec - ocgr_upBd_total_start.tv_usec;
 #endif
 
-	// printf("Number of elements : %d\n", sizeof(cloud.data) / sizeof(cloud.data[0]));
+#if defined(HPVM) || defined(UpdateBoundsHPVM)
+	__hetero_task_end(raytraceFreespaceTask);
+#endif
+
+
+#if defined(HPVM) || defined(UpdateBoundsHPVM)
+	void* ObstacleDetectionTask = __hetero_task_begin(4, obs_ptr, obs_ptr_sz, lidar_inputs, lidar_inputs_sz, lidar_data_size, robot_yaw,
+			1 , obs_ptr, obs_ptr_sz, "obstacleDetection_task");
+
+	void* SectionLoop = __hetero_section_begin();
+#endif
 
 	// Iterate through cloud to register obstacles within costmap
-	for (unsigned int i = 0; i < data_size; i = i + 3) // HPVM: This for loop should be easily parallelizable
-	{                                                  // TODO: Test if sizeof(points) works correctly
+	for (size_t j = 0; j < lidar_data_size / 3; ++j) { // HPVM: This for loop should be easily parallelizable
+
+#if defined(HPVM) || defined(UpdateBoundsHPVM)
+		__hetero_parallel_loop(1, 3, obs_ptr, obs_ptr_sz, lidar_inputs, lidar_inputs_sz, robot_yaw,
+                        1 , obs_ptr, obs_ptr_sz);
+		__hetero_hint(DEVICE);
+#endif
+
+		int i = (j*3);
+
+		float *data = (float *)(lidar_inputs->data);
 		// Only consider points within height boundaries
-		if ((data[i + 2] <= obs_ptr->max_obstacle_height) && (data[i + 2] >= obs_ptr->min_obstacle_height))
-		{
-			// px, py, pz here will be unique per iteration as they are linear with respect to i
+		if ((data[i + 2] <= obs_ptr->max_obstacle_height) && (data[i + 2] >= obs_ptr->min_obstacle_height)) {
+			double robot_x = lidar_inputs->odometry[0];
+			double robot_y = lidar_inputs->odometry[1];
+
 			double px = (double)*(data + i);
 			double py = (double)*(data + i + 1);
 			double pz = (double)*(data + i + 2);
 
 			// if window rotates, then inversely rotate points
-			if (rotating_window)
-			{
-				px = px * cos(robot_yaw) - py * sin(robot_yaw); // this equation will allow px to take the same value in different 
-										// iterations. However in those iterations, the value of py will be 
-										// different
-				py = px * sin(robot_yaw) + py * cos(robot_yaw); // same as above, this equation will allow py to take the same value
-				       						// in different iterations however in those iterations, the value of
-										// the value of px will be different
+			if (rotating_window) {
+				px = px * cos(robot_yaw) - py * sin(robot_yaw); 
+				py = px * sin(robot_yaw) + py * cos(robot_yaw); 
 			}
 
-			// As long as px and/or py are different per iteration, wy and/or wx should be different per iteration
-			int wx, wy;
+			int wx = 0;
+			int wy = 0;
 			worldToMapCell(obs_ptr, px, py, robot_x, robot_y, &wx, &wy);
 
-			// As long as wx and/or wy are different per iteration, the index will be different per iteration
 			unsigned int index = getIndex(obs_ptr, wx, wy);
+
 			CHECK(if (index >= COST_MAP_ENTRIES) {
 					printf("ERROR : updateBounds : index is too large at %d vs %d\n", index, COST_MAP_ENTRIES);
 					});
-			// printf("Index of Obstacle -> %d\n", index);
-			obs_ptr->master_costmap.costmap[index] = CMV_LETHAL_OBSTACLE; // TODO: Test simple test case (char) 255 = '255' ?
-			// touch(px, py, min_x, min_y, max_x, max_y);
+
+			obs_ptr->master_costmap.costmap[index] = CMV_LETHAL_OBSTACLE; 
 		}
 	}
-#ifdef INT_TIME
+
+#if defined(INT_TIME) && !(defined(HPVM) || defined(UpdateBoundsHPVM))
 	gettimeofday(&ocgr_upBd_total_stop, NULL);
 	ocgr_upBd_regObst_sec += ocgr_upBd_total_stop.tv_sec - ocgr_upBd_rayFSp_stop.tv_sec;
 	ocgr_upBd_regObst_usec += ocgr_upBd_total_stop.tv_usec - ocgr_upBd_rayFSp_stop.tv_usec;
@@ -824,6 +860,15 @@ void updateBounds(Observation *obs_ptr, float *data, unsigned int data_size, dou
 	ocgr_upBd_total_sec += ocgr_upBd_total_stop.tv_sec - ocgr_upBd_total_start.tv_sec;
 	ocgr_upBd_total_usec += ocgr_upBd_total_stop.tv_usec - ocgr_upBd_total_start.tv_usec;
 #endif
+
+#if defined(HPVM) || defined(UpdateBoundsHPVM)
+	__hetero_section_end(SectionLoop);
+
+	__hetero_task_end(ObstacleDetectionTask);
+
+	__hetero_section_end(Section);
+#endif
+
 }
 
 /* Issues:
@@ -831,35 +876,21 @@ void updateBounds(Observation *obs_ptr, float *data, unsigned int data_size, dou
    (2) Difference between origin_x_ and observation.origin_x
    */
 void raytraceFreespace(Observation *obs_ptr, float *data, unsigned int data_size,
-		double *min_x, double *min_y, double *max_x, double *max_y,
-		double robot_x, double robot_y, double robot_z, double robot_yaw)
-{
-	// printf("(1) Number of elements : %d ... ", data_size);
-	// printf("First Coordinate = <%f, %f>\n", *data, *(data+1));
-	/** No need to do this here -- provides no more info than exterior measure, really
-#ifdef INT_TIME
-gettimeofday(&ocgr_ryFS_total_start, NULL);
-#endif  **/
+		double robot_x, double robot_y, double robot_z, double robot_yaw) {
 	// Retrieve observation origin (i.e. origin of the pointcloud)
 	double ox = robot_x;
 	double oy = robot_y;
-	// printf(">>> Odometry -> <%f, %f>\n", ox, oy);
 
 	// get the map coordinates of the origin of the sensor
 	int x0, y0;
-	if (!worldToMapCell(obs_ptr, 0, 0, robot_x, robot_y, &x0, &y0))
-	{ // TODO:
+	if (!worldToMapCell(obs_ptr, 0, 0, robot_x, robot_y, &x0, &y0)) { // TODO:
 		printf("The origin for the sensor at (%.2f, %.2f) is out of map bounds. So, the costmap cannot raytrace for it.\n", ox, oy);
 		return;
 	}
-	// printf(">>> Map Coordinates of the Sensor Origin -> <%d, %d>\n", x0, y0);
 
 	// we can pre-compute the endpoints of the map outside of the inner loop... we'll need these later
 	double map_end_x = obs_ptr->master_origin.x + obs_ptr->master_costmap.x_dim * obs_ptr->master_resolution;
 	double map_end_y = obs_ptr->master_origin.y + obs_ptr->master_costmap.y_dim * obs_ptr->master_resolution;
-	// printf(">>> End of Map Coordinates -> <%f, %f>\n", map_end_x, map_end_y);
-
-	// touch(ox, oy, min_x, min_y, max_x, max_y);
 
 	const double sin_yaw = sin(robot_yaw);
 	const double cos_yaw = cos(robot_yaw);
@@ -885,14 +916,11 @@ gettimeofday(&ocgr_ryFS_total_start, NULL);
 	{
 		double wx = (double)*(data + i);
 		double wy = (double)*(data + i + 1);
-		// printf(">>> World Coordinates of Data Point -> <%f, %f>\n", wx, wy);
 
 		// if window rotates, then inversely rotate points
 		if (rotating_window)
 		{
-			// wx = wx*cos(robot_yaw) - wy*sin(robot_yaw);
 			wx = wx * cos_yaw - wy * sin_yaw;
-			// wy = wx*sin(robot_yaw) + wy*cos(robot_yaw);
 			wy = wx * sin_yaw + wy * cos_yaw;
 		}
 
@@ -942,28 +970,9 @@ gettimeofday(&ocgr_ryFS_total_start, NULL);
 		// printf(">>> Cell Raytrace Range -> %d\n", cell_raytrace_range);
 
 		// and finally... we can execute our trace to clear obstacles along that line
-		/** We cannot do this here -- WAY TOO MUCH OVERHEAD!!
-#ifdef INT_TIME
-gettimeofday(&ocgr_ryFS_rtLine_start, NULL);
-#endif  **/
 		raytraceLine(obs_ptr, x0, y0, x1, y1, cell_raytrace_range);
-		/** We cannot do this here -- WAY TOO MUCH OVERHEAD!!
-#ifdef INT_TIME
-gettimeofday(&ocgr_ryFS_rtLine_stop, NULL);
-ocgr_ryFS_rtLine_sec  += ocgr_ryFS_rtLine_stop.tv_sec  - ocgr_ryFS_rtLine_start.tv_sec;
-ocgr_ryFS_rtLine_usec += ocgr_ryFS_rtLine_stop.tv_usec - ocgr_ryFS_rtLine_start.tv_usec;
-#endif  **/
 
-		/* No apparent effect
-		   updateRaytraceBounds(ox, oy, wx, wy, obs_ptr->raytrace_range, min_x, min_y, max_x, max_y);
-		   */
 		}
-		/** No need to do this here -- provides no more info than exterior measure, really
-#ifdef INT_TIME
-gettimeofday(&ocgr_ryFS_total_stop, NULL);
-ocgr_ryFS_total_sec  += ocgr_ryFS_total_stop.tv_sec  - ocgr_ryFS_total_start.tv_sec;
-ocgr_ryFS_total_usec += ocgr_ryFS_total_stop.tv_usec - ocgr_ryFS_total_start.tv_usec;
-#endif  **/
 		}
 
 		static inline void bresenham2D(Observation *obs_ptr, unsigned int abs_da, unsigned int abs_db, int error_b,

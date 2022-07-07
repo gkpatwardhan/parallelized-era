@@ -108,21 +108,16 @@ extern Observation master_observation;
 extern bool rotating_window;
 
 // Define functions
-void fuseIntoLocal(Observation *observations, size_t observations_sz, 
-                   unsigned char *uncmp_data, size_t uncmp_data_sz
-#if false
-                   int *input_y_min, size_t input_y_min_sz /*sizeof(int)*/,
-                   int *input_x_min, size_t input_x_min_sz /*sizeof(int)*/,
-                   int *local_y_min, size_t local_y_min_sz /*sizeof(int)*/,
-                   int *local_y_max, size_t local_y_max_sz /*sizeof(int)*/,
-                   int *local_x_min, size_t local_x_min_sz /*sizeof(int)*/,
-                   int *local_x_max, size_t local_x_max_sz /*sizeof(int)*/,
-                   int *local_x_cells, size_t local_x_cells_sz /*sizeof(int)*/,
-                   int *input_x_cells, size_t input_x_cells_sz /*sizeof(int)*/
-#endif
-			);
+void fuseIntoLocal(Observation *observations, size_t observations_sz,
+                unsigned char *uncmp_data, size_t uncmp_data_sz,
+                double local_av_x_, double local_av_y_,
+                double input_av_x_, double input_av_y_,
+                unsigned int local_x_dim_, unsigned int local_y_dim_,
+                unsigned int input_x_dim_, unsigned int input_y_dim_,
+                double local_cell_size_,
+                double input_cell_size_);
 
-    void combineGrids(unsigned char *grid1, unsigned char *grid2, double robot_x1, double robot_y1,
+void combineGrids(unsigned char *grid1, unsigned char *grid2, double robot_x1, double robot_y1,
                       double robot_x2, double robot_y2, unsigned int cell_size_x, unsigned int cell_size_y, double resolution /*, char def_val*/);
 
 void initCostmap(Observation *obs_ptr, bool rolling_window,
@@ -131,8 +126,9 @@ void initCostmap(Observation *obs_ptr, bool rolling_window,
                  /*unsigned char default_value,*/
                  double robot_x, double robot_y, double robot_z);
 
-void updateBounds(Observation *obs_ptr, float *data, unsigned int data_size, double robot_x, double robot_y,
-                  double robot_z, double robot_yaw, double *min_x, double *min_y, double *max_x, double *max_y);
+void updateBounds(Observation *obs_ptr, size_t obs_ptr_sz,
+                lidar_inputs_t *lidar_inputs, size_t lidar_inputs_sz /*=sizeof(lidar_inputs_t)*/,
+                double robot_yaw, size_t lidar_data_size);
 
 void updateOrigin(Observation *obs_ptr, double new_origin_x, double new_origin_y);
 
