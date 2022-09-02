@@ -90,7 +90,7 @@ extern uint64_t r_fHcvtout_usec;
 void recv_pipe_init();
 
 //#ifdef HPVM
-void do_recv_pipeline(int num_recvd_vals, float* recvd_in_real, size_t recvd_in_real_sz,
+void do_recv_pipeline(size_t num_recvd_vals, float* recvd_in_real, size_t recvd_in_real_sz,
   float* recvd_in_imag, size_t recvd_in_imag_sz,
   int* recvd_msg_len, size_t recvd_msg_len_sz, char * recvd_msg, size_t recvd_msg_sz,
   /*'Custom' variables used compute() which this function calls*/

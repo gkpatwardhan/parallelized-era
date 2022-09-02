@@ -426,7 +426,6 @@ __attribute__((noinline)) void grid_fusion(
 	//      In the first part, the load all the values they will need in the for-loop
 	//      The second part is the for-loop which initializes the argument array local_map_cp. This loop can
 	//        be parallelized
-	// Status: fuseIntoLocal() has been split up into tasks; just the parallel loop markers need to be put in
 #endif
 
 	// Then we should "Fuse" the received GridMap with our local one
