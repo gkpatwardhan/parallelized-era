@@ -1551,26 +1551,14 @@ __attribute__ ((noinline)) void process_lidar_to_occgrid_Wrapper(lidar_inputs_t 
 #define MAX_SIZE 24600          // from xmit_pipe.c
 #define ofdm_max_out_size 33280 // from xmit_pipe.c
 
-void transmit_occgrid(int * n_cmp_bytes /*from process_lidar_to_occgrid*/, size_t n_cmp_bytes_sz /*=1*/,
-	unsigned char * cmp_data /*from process_lidar_to_occgrid*/, size_t cmp_data_sz /*=MAX_COMPRESSED_DATA_SIZE*/,
+void transmit_occgrid(
 	int n_xmit_out, float * xmit_out_real, size_t xmit_out_real_sz,
-	float * xmit_out_imag, size_t xmit_out_imag_sz,
-	int * psdu_len, size_t psdu_len_sz,
-	uint8_t * pckt_hdr_out, size_t pckt_hdr_out_sz,
-	int * pckt_hdr_len, size_t pckt_hdr_len_sz,
-	float * msg_stream_real, size_t msg_stream_real_sz,
-	float * msg_stream_imag, size_t msg_stream_imag_sz,
-	float * ofdm_car_str_real, size_t ofdm_car_str_real_sz,
-	float * ofdm_car_str_imag, size_t ofdm_car_str_imag_sz,
-	int * ofc_res, size_t ofc_res_sz,
-	float * fft_out_real, size_t fft_out_real_sz,
-	float * fft_out_imag, size_t fft_out_imag_sz,
-	float * cycpref_out_real, size_t cycpref_out_real_sz,
-	float * cycpref_out_imag, size_t cycpref_out_imag_sz) {
+	float * xmit_out_imag, size_t xmit_out_imag_sz
+	) {
 	// This section has no tasks as we are doing IO; introducing tasks can lead to race conditions
 	// Now we transmit the grid...
 
-	DBGOUT(printf("  Back from do_xmit_pipeline with %u xmit outputs...\n", *n_xmit_out));
+	printf("  Back from do_xmit_pipeline with ..\n");
 
 	// This is now the content that should be sent out via IEEE 802.11p WiFi
 	// The n_xmit_out values of xmit_out_real and xmit_out_imag
@@ -1581,27 +1569,31 @@ void transmit_occgrid(int * n_cmp_bytes /*from process_lidar_to_occgrid*/, size_
 #endif
 	unsigned xfer_bytes = (n_xmit_out) * sizeof(float);
 	snprintf(w_buffer, 9, "X%-6uX", xfer_bytes);
-	DBGOUT(printf("\nXMIT Sending %s on XMIT port %u socket\n", w_buffer, XMIT_PORT));
+//	DBGOUT(printf("\nXMIT Sending %s on XMIT port %u socket\n", w_buffer, XMIT_PORT));
 	send(xmit_sock, w_buffer, 8, 0);
-	DBGOUT(printf("     Send %u REAL values %u bytes on XMIT port %u socket\n", n_xmit_out, xfer_bytes,
-		XMIT_PORT));
-	DBGOUT2(printf("XFER %4u : Dumping XMIT-PIPE REAL raw bytes\n", xmit_count);
-	for (int i = 0; i < n_xmit_out; i++) {
-		printf("XFER %4u REAL-byte %6u : %f\n", xmit_count, i, xmit_out_real[i]);
-	} printf("\n"));
+//	DBGOUT(printf("     Send %u REAL values %u bytes on XMIT port %u socket\n", n_xmit_out, xfer_bytes,
+//		XMIT_PORT));
+//	DBGOUT2(printf("XFER %4u : Dumping XMIT-PIPE REAL raw bytes\n", xmit_count);
+//	for (int i = 0; i < n_xmit_out; i++) {
+//		printf("XFER %4u REAL-byte %6u : %f\n", xmit_count, i, xmit_out_real[i]);
+//	} printf("\n"));
 #ifdef INT_TIME
 	gettimeofday(&start_pd_wifi_send_rl, NULL);
 #endif
+	printf("Sending data over socket ..\n");
+	printf("Xmit_out_real: %s\n", (char *) (xmit_out_real));
+	printf("n_xmit_out: %d\n", n_xmit_out);
 	send(xmit_sock, (char *) (xmit_out_real), (n_xmit_out) * sizeof(float), 0);
-	DBGOUT(printf("     Send %u IMAG values %u bytes on XMIT port %u socket\n", n_xmit_out, xfer_bytes,
-		XMIT_PORT));
-	DBGOUT2(printf("XFER %4u : Dumping XMIT-PIPE IMAG raw bytes\n", xmit_count);
-	for (int i = 0; i < (n_xmit_out); i++) {
-		printf("XFER %4u IMAG-byte %6u : %f\n", xmit_count, i, xmit_out_imag[i]);
-	} printf("\n"));
+//	DBGOUT(printf("     Send %u IMAG values %u bytes on XMIT port %u socket\n", n_xmit_out, xfer_bytes,
+//		XMIT_PORT));
+//	DBGOUT2(printf("XFER %4u : Dumping XMIT-PIPE IMAG raw bytes\n", xmit_count);
+//	for (int i = 0; i < (n_xmit_out); i++) {
+//		printf("XFER %4u IMAG-byte %6u : %f\n", xmit_count, i, xmit_out_imag[i]);
+//	} printf("\n"));
 #ifdef INT_TIME
 	gettimeofday(&stop_pd_wifi_send_rl, NULL);
 #endif
+	printf("Sending xmit_out_imag\n");
 	send(xmit_sock, (char *) (xmit_out_imag), (n_xmit_out) * sizeof(float), 0);
 #ifdef INT_TIME
 	gettimeofday(&stop_pd_wifi_send, NULL);
@@ -1613,7 +1605,9 @@ void transmit_occgrid(int * n_cmp_bytes /*from process_lidar_to_occgrid*/, size_
 	pd_wifi_send_im_usec += stop_pd_wifi_send.tv_usec - stop_pd_wifi_send_rl.tv_usec;
 #endif
 
+	printf("Incrementing xmit_count\n");
 	xmit_count++;
+	printf("Leaving transmit_occgrid\n");
 }
 
 /***********************************************************************************
@@ -2382,7 +2376,7 @@ int main(int argc, char * argv[]) {
                          	&d_frame_org, d_frame_org_sz,
 				d_pilot_carriers_org, d_pilot_carriers_org_sz,
 				// Outputs
-				13, &n_cmp_bytes, sizeof(int),
+				16, &n_cmp_bytes, sizeof(int),
 				cmp_data, MAX_COMPRESSED_DATA_SIZE,
 				&observationsArr[next_obs], sizeof(Observation),
 				&d_psdu_org, d_psdu_org_size,
@@ -2395,9 +2389,9 @@ int main(int argc, char * argv[]) {
 				&d_ofdm_org, d_ofdm_org_sz,
                                 &d_frame_org, d_frame_org_sz,
 				d_pilot_carriers_org, d_pilot_carriers_org_sz
-				/*&n_xmit_out, n_xmit_out_sz,
+				&n_xmit_out, n_xmit_out_sz,
 					xmit_out_real, xmit_out_real_sz,
-					xmit_out_imag, xmit_out_imag_sz*/
+					xmit_out_imag, xmit_out_imag_sz
 			);
 			__hetero_wait(lidarDAG);
 #else
@@ -2446,23 +2440,11 @@ int main(int argc, char * argv[]) {
 
 
 			// Send the occgrid through the socket
-			transmit_occgrid(&n_cmp_bytes, n_cmp_bytes_sz,
-				cmp_data, cmp_data_sz,
+			transmit_occgrid(
 				n_xmit_out,
 				xmit_out_real, xmit_out_real_sz,
-				xmit_out_imag, xmit_out_imag_sz,
-				&psdu_len, psdu_len_sz,
-				pckt_hdr_out, pckt_hdr_out_sz,
-				&pckt_hdr_len, pckt_hdr_len_sz,
-				msg_stream_real, msg_stream_real_sz,
-				msg_stream_imag, msg_stream_imag_sz,
-				ofdm_car_str_real, ofdm_car_str_real_sz,
-				ofdm_car_str_imag, ofdm_car_str_imag_sz,
-				&ofc_res, ofc_res_sz,
-				fft_out_real, fft_out_real_sz,
-				fft_out_imag, fft_out_imag_sz,
-				cycpref_out_real, cycpref_out_real_sz,
-				cycpref_out_imag, cycpref_out_imag_sz);
+				xmit_out_imag, xmit_out_imag_sz
+				);
 #if PARALLEL_PTHREADS
 			; // nothing to do here...
 #else

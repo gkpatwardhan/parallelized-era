@@ -65,12 +65,14 @@ X. OUTPUT : <some number of complex numbers?>
 #include "fft.h"
 #include "globalsXmitPipe.h"
 
+#include <unistd.h>
+
 #if defined(HPVM)
 #include "hpvm.h"
 #include "hetero.h"
 #endif
 
-#define DEVICE CPU_TARGET
+//#define DEVICE CPU_TARGET
 
 #ifdef INT_TIME
 /* This is XMIT PIPE internal Timing information (gathering resources) */
@@ -699,7 +701,7 @@ xdmw_intlv_usec += xdmw_intlv_stop.tv_usec - xdmw_punct_stop.tv_usec;
 // one byte per symbol
 //     split_symbols(interleaved_data, symbols, frame, d_ofdm);
 //     void split_symbols(const char *in, char *out, frame_param &frame, ofdm_param &ofdm)
- printf("On line 704 in xmit_pipe.c\n");
+// printf("On line 704 in xmit_pipe.c\n");
 {
 	int n_symbols = d_frame->n_sym * 48;
 	int idx = 0;
@@ -757,6 +759,7 @@ for (int di = 0; di < i; di++) {
 			});
 }
 //printf("Updating the value of d_symbols_offset\n");
+//printf(" Done with do_mapper_work %d\n", 5*(*d_symbols_len));
 *d_symbols_offset += i;
 
 if (*d_symbols_offset == *d_symbols_len) {
@@ -789,7 +792,6 @@ xdmw_mapout_usec += xdmw_mapout_stop.tv_usec - xdmw_symbls_stop.tv_usec;
 xdmw_total_sec += xdmw_mapout_stop.tv_sec - xdmw_total_start.tv_sec;
 xdmw_total_usec += xdmw_mapout_stop.tv_usec - xdmw_total_start.tv_usec;
 #endif
-//printf("Done with do_mapper_work\n");
 return i;
 }
 
@@ -3353,7 +3355,7 @@ int do_ofdm_carrier_allocator_cvc_impl_work(int noutput_items,
 #define d_cp_size 16
 
 void
-do_ofdm_cyclic_prefixer_impl_work(int n_symbols, float * in_real, float * in_imag, float * out_real, float * out_imag) {
+do_ofdm_cyclic_prefixer_impl_work(int n_symbols, const float * in_real, const float * in_imag, float * out_real, float * out_imag) {
 	int d_input_size = 64;
 	int d_output_size = d_input_size + d_cp_size;
 	float d_up_flank[d_rolloff_len - 1];
@@ -3552,7 +3554,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 	void* Section = __hetero_section_begin();
 	void* T1 = __hetero_task_begin(2, ofc_res, ofc_res_sz, input_real, input_real_sz, 
 			1, input_real, input_real_sz, "logging_task");
-	__hpvm__hint(DEVICE);
+	__hpvm__hint(CPU_TARGET);
 #endif
 	{
 		int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
@@ -3592,7 +3594,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 				ofc_res, ofc_res_sz,
 				output_real, output_real_sz, output_imag, output_imag_sz,
 				2, output_real, output_real_sz, output_imag, output_imag_sz, "xmit_hw_fft_task");
-		__hpvm__hint(DEVICE);
+		__hpvm__hint(CPU_TARGET);
 #endif
 
 		float scale = 1 / sqrt(52.0); // HPVM: Copied from do_xmit_pipeline in T6
@@ -3703,7 +3705,12 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 					2, output_real, output_real_sz, output_imag, output_imag_sz, "fft_ri_task_loop");
 #if defined(PARALLEL_LOOP)
 			void* SectionLoop = __hetero_section_begin();
+#else
+		__hpvm__hint(CPU_TARGET); // TODO: HPVM: Can't put this on the fpga; getting error: WARNING: this target does not support the llvm.stacksave intrinsic.
+// Couldn't find induction Variable in loop!
+
 #endif
+
 #endif
 
 			float scale = 1 / sqrt(52.0); // HPVM: Copied from do_xmit_pipeline in T6
@@ -3734,7 +3741,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						output_real, output_real_sz, output_imag, output_imag_sz,
 						ofc_res, ofc_res_sz,
 						2, output_real, output_real_sz, output_imag, output_imag_sz, "fft_ri_task");
-				__hpvm__hint(DEVICE);
+				__hpvm__hint(CPU_TARGET);
 #endif
 				int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
 				int k = iteration * size;
@@ -3868,6 +3875,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 
 #if defined(HPVM)
 							void* T3 = __hetero_task_begin(1, input_real, input_real_sz, 1, input_real, input_real_sz, "logging_end_task");
+							__hpvm__hint(CPU_TARGET);
 #endif
 
 							DO_LIMITS_ANALYSIS(printf("DO_XMIT_FFT_WORK : min_input = %.15g  max_input = %.15g\n", min_input, max_input));
@@ -3896,7 +3904,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_psdu, d_psdu_size,
 								d_seq_nr, d_seq_nr_sz,
 								3, psdu_len, psdu_len_sz, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz, "mac_data_task");
-						 __hpvm__hint(DEVICE); // This function must run on cpu for now as it uses a global variable in crc.c file which is stored 
+						 __hpvm__hint(CPU_TARGET); // TODO: HPVM: This function must run on cpu for now as it uses a global variable in crc.c file which is stored 
 						// only on cpu
 #endif
 
@@ -3918,6 +3926,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						x_genmacfr_sec += x_genmacfr_stop.tv_sec - x_genmacfr_start.tv_sec;
 						x_genmacfr_usec += x_genmacfr_stop.tv_usec - x_genmacfr_start.tv_usec;
 #endif
+						printf("Done with generate_mac_data_frame\n");
 
 #if defined(HPVM)
 						__hetero_task_end(T1);
@@ -3954,7 +3963,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_ofdm, d_ofdm_sz,
 								d_frame, d_frame_sz,
 								d_psdu, d_psdu_size, d_map_out, d_map_out_sz, "mapper_task");
-						// __hpvm__hint(DEVICE);// TODO: HPVM: Uncomment me
+						 __hpvm__hint(CPU_TARGET); // TODO: HPVM: Can't put this on the fpga as llvm doesn't support smax operation on llvm and this operation is required by the task
 #endif
 #ifdef INT_TIME
 						gettimeofday(&x_domapwk_start, NULL);
@@ -3975,6 +3984,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						x_domapwk_sec += x_domapwk_stop.tv_sec - x_domapwk_start.tv_sec;
 						x_domapwk_usec += x_domapwk_stop.tv_usec - x_domapwk_start.tv_usec;
 #endif
+						printf("Done with do_mapper_work\n");
 #if defined(HPVM)
 						__hetero_task_end(T2);
 						__hetero_section_end(Section);
@@ -3995,7 +4005,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_ofdm, d_ofdm_sz,
 								d_frame, d_frame_sz,
 								"packer_hdr_task");
-						__hpvm__hint(DEVICE);
+						__hpvm__hint(CPU_TARGET); // TODO: HPVM: This task isn't running on fpga correctly for some reason; ERA crashes when this task is placed on fpga
 #endif
 
 #ifdef INT_TIME
@@ -4017,7 +4027,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								printf("%1x ", pckt_hdr_out[i]);
 								}
 								printf("\n"));
-						printf("Done with do_packet_header_gen\n");
+						//printf("Done with do_packet_header_gen\n");
 
 #if defined(HPVM)
 						__hetero_task_end(T3);
@@ -4044,8 +4054,9 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_ofdm, d_ofdm_sz,
 								d_frame, d_frame_sz,
 								"chuck_strm_task");
-						// __hpvm__hint(DEVICE); // TODO: HPVM: Uncomment me
-						// needs to be passed in via the argument for chuck_strm to be run on fpga; till then run chuck_strm on cpu
+							 __hpvm__hint(CPU_TARGET);  // TODO: HPVM: This task can't be run on fpga. Getting error: WARNING: this target does not support the llvm.stacksave intrinsic.
+					// Couldn't find induction Variable in loop!
+
 #endif
 
 						// Convert the header chunks to symbols (uses simple BPSK_1_2 map: 0 -> -1+0i and 1 -> +1+0i)
@@ -4066,7 +4077,6 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						for (int i = 0; i < (*pckt_hdr_len); i++) {
 							msg_stream_real[msg_idx] = bpsk_chunks2sym(pckt_hdr_out[i]);
 							msg_stream_imag[msg_idx] = 0.0;
-							//    DEBUG(printf("HDR: msg_stream[%2u] = %4.1f + %4.1f\n", msg_idx, msg_stream_real[msg_idx], msg_stream_imag[msg_idx]));
 							msg_idx++;
 						}
 						//  printf("\n");
@@ -4074,7 +4084,6 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						for (int i = 0; i < mapper_payload_size_cp; i++) {
 							msg_stream_real[msg_idx] = bpsk_chunks2sym(d_map_out[i]);
 							msg_stream_imag[msg_idx] = 0.0;
-							//    DEBUG(printf("PYLD: msg_stream[%4u] = %4.1f + %4.1f\n", msg_idx, msg_stream_real[msg_idx], msg_stream_imag[msg_idx]));
 							msg_idx++;
 						}
 						//  printf("\n");
@@ -4082,7 +4091,6 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						for (int i = msg_idx; i < MAX_SIZE; i++) {
 							msg_stream_real[i] = 0.0;
 							msg_stream_imag[i] = 0.0;
-							//    DEBUG(printf("LAST: msg_stream[%4u] = %4.1f + %4.1f\n", i, msg_stream_real[i], msg_stream_imag[i]));
 						}
 						printf("Done with chuck_strm\n");
 
@@ -4125,7 +4133,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_frame, d_frame_sz,
 								d_pilot_carriers, d_pilot_carriers_sz,
 								ofc_res, ofc_res_sz, "carrier_alloc_task");
-//						__hpvm__hint(DEVICE); // TODO: HPVM: Uncomment me
+						__hpvm__hint(CPU_TARGET); // TODO: HPVM: Running this task on fpga gives lots of issues as this task uses constant globals
 #endif
 
 						// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));
@@ -4178,7 +4186,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								cycpref_out_imag, cycpref_out_imag_sz,
 								2, cycpref_out_real, cycpref_out_real_sz, cycpref_out_imag, cycpref_out_imag_sz,
 								"cyclic_prefix_task");
-						__hpvm__hint(DEVICE);
+						__hpvm__hint(CPU_TARGET);
 #endif
 
 						//#include "gold_fft_outputs.c"
@@ -4200,7 +4208,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						/*  gettimeofday(&x_ocycpref_start, NULL); */
 						/* #endif */
 						do_ofdm_cyclic_prefixer_impl_work(*ofc_res, fft_out_real, fft_out_imag, cycpref_out_real, cycpref_out_imag);
-						printf("Done with do_ofdm_cyclic_prefixer_impl_work\n");
+						//printf("Done with do_ofdm_cyclic_prefixer_impl_work\n");
 
 #ifdef INT_TIME
 						gettimeofday(&x_ocycpref_stop, NULL);
@@ -4235,33 +4243,35 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						__hpvm__hint(DEVICE);
 #endif
 
+
 						int num_cycpref_outs_cp = (*ofc_res) * (d_fft_len + d_cp_size) + 1; // copied from above task
 						// The next "stage" is the "packet_pad2" which adds 500 zeros to the front (and no zeros to the rear) of the output
 						//   This block may also add some time-stamp tags (for UHD?) for GnuRadio use?
 						//   Not sure we care about this padding?
 						bool do_add_pre_pad = false;
-						DEBUG(printf("\nAdd the pre-padding : %u\n", do_add_pre_pad));
 						int num_pre_pad = do_add_pre_pad ? 500 : 0;
 						int num_post_pad = 0;
-						DEBUG(printf("\n"));
 
 						// Now set the Final Outputs
-						DEBUG(printf("\nFinal XMIT output:\n"));
 						*num_final_outs = num_pre_pad + num_cycpref_outs_cp + num_post_pad;
-						DO_NUM_IOS_ANALYSIS(printf("Set num_finalouts to %u = pre-pad %u + %u num_cycpref_outs\n",
-									*num_final_outs, num_pre_pad, num_cycpref_outs_cp));
 						for (int i = 0; i < num_pre_pad; i++) {
 							final_out_real[i] = 0.0;
 							final_out_imag[i] = 0.0;
-							DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", i, final_out_real[i], final_out_imag[i]));
 						}
 						for (int i = 0; i < num_cycpref_outs_cp; i++) {
 							int iidx = num_pre_pad + i;
 							final_out_real[iidx] = cycpref_out_real[i];
 							final_out_imag[iidx] = cycpref_out_imag[i];
-							DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", iidx, final_out_real[iidx], final_out_imag[iidx]));
 						}
-						printf("Done padding\n");
+
+						// Data transfer:
+						// enable the runtime debug prints: re-run cmake and provide the flag sent in slack DRTDEBUG and then compile ERA
+						// 			runtime will print out the status of the memory tracker and what memory is getting requested and tracked
+						// cl intercept dump => will show which buffers are being copied and will mention name buffer names
+						// check validity of opencl code -- on slack
+						// make one ERA only on the cpu -- so they don't collide
+						// Worst-case: look at llvm bitcode to show what's going wrong
+
 						/* for (int i = 0; i < num_post_pad; i++) { */
 						/*   int iidx = num_pre_pad + num_cycpref_outs_cp + i; */
 						/*   final_out_real[iidx] = 0.0; */
@@ -4327,9 +4337,6 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 											"mac_data_task_wrapper");
 #endif
 
-									printf("\nd_psdu: %p: %d\n", d_psdu, *d_psdu);
-									printf("d_seq_nr: %p: %d\n", d_seq_nr, *d_seq_nr);
-									printf("ERA: Calling mac_data_Wrapper\n");
 									mac_data_Wrapper(in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz, d_psdu, d_psdu_size,
 											d_seq_nr, d_seq_nr_sz);
 
