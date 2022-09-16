@@ -45,7 +45,7 @@
 
 #define PARALLEL_PTHREADS false
 
-#define ERA2
+#define ERA1
 
 #ifdef ERA1
 char * IMAGE_FN = "gridimage_era1_";
@@ -515,7 +515,6 @@ void grid_fusion(Observation * observations, size_t observations_sz,
 	void * Section_Inner = __hetero_section_begin();
 	void * T4 = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
 		1, observations, observations_sz, "gridFusion_task");
-	__hpvm__hint(DEVICE);
 #endif
 
 	// Then we should "Fuse" the received GridMap with our local one
@@ -582,7 +581,6 @@ void grid_fusion_Wrapper2(Observation * observations, size_t observations_sz,
 	void * Section_Caller = __hetero_section_begin();
 	void * T4_Caller = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
 		1, observations, observations_sz, "gridFusion_task_wrapper2");
-	__hpvm__hint(DEVICE);
 #endif
 
 	grid_fusion(observations, observations_sz, uncmp_data, uncmp_data_sz);
@@ -600,7 +598,6 @@ void grid_fusion_Wrapper3(Observation * observations, size_t observations_sz,
 	void * Section_Caller = __hetero_section_begin();
 	void * T4_Caller = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
 		1, observations, observations_sz, "gridFusion_task_wrapper3");
-	__hpvm__hint(DEVICE);
 #endif
 
 	grid_fusion_Wrapper2(observations, observations_sz, uncmp_data, uncmp_data_sz);
@@ -618,7 +615,6 @@ void grid_fusion_Wrapper4(Observation * observations, size_t observations_sz,
 	void * Section_Caller = __hetero_section_begin();
 	void * T4_Caller = __hetero_task_begin(2, observations, observations_sz, uncmp_data, uncmp_data_sz,
 		1, observations, observations_sz, "gridFusion_task_wrapper4");
-	__hpvm__hint(DEVICE);
 #endif
 
 	grid_fusion_Wrapper3(observations, observations_sz, uncmp_data, uncmp_data_sz);
@@ -820,6 +816,33 @@ void fuse_maps(int n_recvd_in,
 	__hetero_section_end(SectionLoop);
 #endif
 }
+
+/* GLOBALS NEEDED FOR RECIEVE PIPELINE */
+fx_pt  delay16_out[DELAY_16_MAX_OUT_SIZE];
+fx_pt  cmpx_conj_out[CMP_CONJ_MAX_SIZE];
+fx_pt  firc_input[CMP_MULT_MAX_SIZE + COMPLEX_COEFF_LENGTH]; // holds cmpx_mult_out but pre-pads with zeros
+fx_pt * cmpx_mult_out = &(firc_input[COMPLEX_COEFF_LENGTH]);
+fx_pt  correlation_complex[FIRC_MAVG48_MAX_SIZE]; // (firc mov_avg48 output
+//fx_pt correlation_complex_m48[MOV_AVG48_MAX_SIZE]; // (mov_avg48 output
+
+fx_pt1  correlation[CMP2MAG_MAX_SIZE]; // complex_to_mangitude outpu
+fx_pt1  fir_input[CMP2MAGSQ_MAX_SIZE + COEFF_LENGTH]; // holds signal_power but pre-pads with zeros
+fx_pt1 * signal_power = &(fir_input[COEFF_LENGTH]);
+fx_pt1  avg_signal_power[FIR_MAVG64_MAX_SIZE]; // fir moving-average-64
+//fx_pt1 avg_signal_power_m64[MOV_AVG64_MAX_SIZE]; // moving-average64
+
+fx_pt1 the_correlation[DIVIDE_MAX_SIZE];
+
+fx_pt frame_d[DELAY_320_MAX_OUT_SIZE]; // delay320 output
+//fx_pt sync_short_out_frames[SYNC_S_OUT_MAX_SIZE]; // sync_short output
+fx_pt * sync_short_out_frames = &(frame_d[320]); // auto-prepends the delay-320 behavior
+fx_pt d_sync_long_out_frames[SYNC_L_OUT_MAX_SIZE]; // sync_long_output
+
+//uint8_t  decoded_message[MAX_PAYLOAD_SIZE];   // Holds the resulting decodede message.
+
+// The input data goes through a delay16 that simply re-indexes the data (prepending 16 0+0i values)...
+fx_pt * input_data = &delay16_out[16]; // [2*(RAW_DATA_IN_MAX_SIZE + 16)];  // Holds the input data (plus a "front-pad" of 16 0's for delay16
+
 
 /*
  * This function is called by receive_and_fuse_maps after the state of lmap_count changes to 0.
@@ -1919,7 +1942,7 @@ void cv_root(unsigned tr_val, label_t * out_label, size_t outlabel_sz) {
 #if (defined(HPVM) && defined(HPVM_CV_ROOT))
 	void * Section = __hetero_section_begin();
 	void * T1 = __hetero_task_begin(2, tr_val, out_label, outlabel_sz, 1, out_label, outlabel_sz, "cv_root_task");
-	__hpvm__hint(DEVICE);
+//	__hpvm__hint(DEVICE);
 #endif
 	* out_label = run_object_classification(tr_val);
 
@@ -1952,7 +1975,7 @@ void cv_root(uint8_t * rgb_image, size_t rgb_image_sz, dim_t * dimensions, size_
 	void * Section = __hetero_section_begin();
 	void * T1 = __hetero_task_begin(5, rgb_image, rgb_image_sz, dimensions, dimensions_sz, filename, filename_sz,
 		nboxes, nboxes_sz, dets, dets_sz, 1, dets, dets_sz, "cv_root_task");
-	__hpvm__hint(DEVICE);
+//	__hpvm__hint(DEVICE);
 #endif
 	// dets = run_object_classification(rgb_image, *dimensions, filename, nboxes); // TODO: Uncomment me; this is commented cause my machine doesn't have opencv.
 
@@ -2388,10 +2411,10 @@ int main(int argc, char * argv[]) {
 				&d_symbols_len_org, d_symbols_len_org_sz,
 				&d_ofdm_org, d_ofdm_org_sz,
                                 &d_frame_org, d_frame_org_sz,
-				d_pilot_carriers_org, d_pilot_carriers_org_sz
+				d_pilot_carriers_org, d_pilot_carriers_org_sz,
 				&n_xmit_out, n_xmit_out_sz,
-					xmit_out_real, xmit_out_real_sz,
-					xmit_out_imag, xmit_out_imag_sz
+				xmit_out_real, xmit_out_real_sz,
+				xmit_out_imag, xmit_out_imag_sz
 			);
 			__hetero_wait(lidarDAG);
 #else
@@ -2437,6 +2460,9 @@ int main(int argc, char * argv[]) {
 #endif
 
 			printf("%s %d Calling transmit occgrid ", __FILE__, __LINE__);
+			printf("n_xmit_out: ", n_xmit_out);
+			printf("xmit_out_real:%s", xmit_out_real);
+			printf("xmit_out_imag:%s", xmit_out_imag);
 
 
 			// Send the occgrid through the socket

@@ -46,7 +46,7 @@
 //
 //
 
-#undef HPVM // TODO: REMOVE ME
+//#undef HPVM // TODO: REMOVE ME
 
 #if defined(HPVM)
 #include "hpvm.h"
@@ -137,7 +137,7 @@ uint64_t r_fHcvtout_usec = 0LL;
 #endif
 
 
-fx_pt  delay16_out[DELAY_16_MAX_OUT_SIZE];
+/*fx_pt  delay16_out[DELAY_16_MAX_OUT_SIZE];
 fx_pt  cmpx_conj_out[CMP_CONJ_MAX_SIZE];
 fx_pt  firc_input[CMP_MULT_MAX_SIZE + COMPLEX_COEFF_LENGTH]; // holds cmpx_mult_out but pre-pads with zeros
 fx_pt * cmpx_mult_out = &(firc_input[COMPLEX_COEFF_LENGTH]);
@@ -157,10 +157,11 @@ fx_pt frame_d[DELAY_320_MAX_OUT_SIZE]; // delay320 output
 fx_pt * sync_short_out_frames = &(frame_d[320]); // auto-prepends the delay-320 behavior
 fx_pt d_sync_long_out_frames[SYNC_L_OUT_MAX_SIZE]; // sync_long_output
 
-uint8_t  decoded_message[MAX_PAYLOAD_SIZE];   // Holds the resulting decodede message.
+//uint8_t  decoded_message[MAX_PAYLOAD_SIZE];   // Holds the resulting decodede message.
 
 // The input data goes through a delay16 that simply re-indexes the data (prepending 16 0+0i values)...
 fx_pt * input_data = &delay16_out[16]; // [2*(RAW_DATA_IN_MAX_SIZE + 16)];  // Holds the input data (plus a "front-pad" of 16 0's for delay16
+*/
 
 
 void compute(unsigned num_inputs, fx_pt * input_data, size_t input_data_sz,
@@ -281,6 +282,7 @@ void free_RECV_FFT_HW_RESOURCES() {
 void
 recv_pipe_init() {
 	// Initialize the pre-pended zero segments for fir_input and firc_input
+	fx_pt1  fir_input[CMP2MAGSQ_MAX_SIZE + COEFF_LENGTH]; // holds signal_power but pre-pads with zeros
 	for (int i = 0; i < COEFF_LENGTH; i++) {
 		fir_input[i] = 0;
 	}
@@ -344,7 +346,8 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 		fx_pt1* fft_ar_i, size_t fft_ar_i_sz /*= FRAME_EQ_IN_MAX_SIZE*/, 
 		unsigned* num_sync_long_vals, size_t num_sync_long_vals_sz /*= sizeof(unsigned)*/,
 		unsigned* returnValue, size_t returnValue_sz /*= sizeof(unsigned)*/,
-		unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz) {
+		unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz,
+		fx_pt * d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/) {
 
 #if defined(HPVM) 
 	void* Section = __hetero_section_begin();
@@ -370,14 +373,17 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 #ifdef RECV_HW_FFT
 
 #if defined(HPVM) 
-	void* T2 = __hetero_task_begin(5, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
+	void* T2 = __hetero_task_begin(6, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
 			num_sync_long_vals, num_sync_long_vals_sz, 
 			returnValue, returnValue_sz, 
 			num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
-			5, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
+			d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+			6, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
 			num_sync_long_vals, num_sync_long_vals_sz,
 			num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
-			returnValue, returnValue_sz, "recv_hw_fft_task");
+			returnValue, returnValue_sz, 
+			d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+			"recv_hw_fft_task");
 	__hpvm__hint(DEVICE);
 #endif
 	{
@@ -410,7 +416,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 				for (unsigned j = 0; j < 64; j++) {
 					fx_pt fftSample;
 					//printf("    RECV: jidx %u : fftSample = d_sync_long_out_frames[64* %u + %u] = [ %u ] = %f\n", jidx, i, j, 64*i+j, d_sync_long_out_frames[64*i + j]); fflush(stdout);
-					fftSample = d_sync_long_out_frames[64 * i + j]; // 64 * invocations + offset_j
+					fftSample = d_sync_long_out_frames_arg[64 * i + j]; // 64 * invocations + offset_j
 					recv_fftHW_lmem[fn][jidx++] = float2fx((float) crealf(fftSample), FX_IL);
 					recv_fftHW_lmem[fn][jidx++] = float2fx((float) cimagf(fftSample), FX_IL);
 				}
@@ -465,12 +471,14 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 	// end #ifdef RCV_HW_FFT
 #else
 #if defined(HPVM) 
-	void* T2 = __hetero_task_begin(4, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
+	void* T2 = __hetero_task_begin(5, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
 			num_sync_long_vals, num_sync_long_vals_sz, 
 			num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
-			4, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
+			d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+			5, fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
 			num_sync_long_vals, num_sync_long_vals_sz,
 			num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
+			d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
 			"fft_ri_for_loop_wrappertask");
 #if !defined(PARALLEL_LOOP)
 			__hpvm__hint(DEVICE); 
@@ -483,15 +491,17 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 		for (unsigned i = 0; i < MAX_FFT_FRAMES /*SYNC_L_OUT_MAX_SIZE/64*/; i++) { // This is the "spin" to invoke the FFT
 
 #if defined(PARALLEL_LOOP)
-			__hetero_parallel_loop(1, 4, fft_ar_r, fft_ar_r_sz, 
+			__hetero_parallel_loop(1, 5, fft_ar_r, fft_ar_r_sz, 
 						fft_ar_i, fft_ar_i_sz, 
 						num_sync_long_vals, num_sync_long_vals_sz, 
 						num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz, 
+						d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
 						// Outputs
-						4, fft_ar_r, fft_ar_r_sz, 
+						5, fft_ar_r, fft_ar_r_sz, 
 						fft_ar_i, fft_ar_i_sz, 
 						num_sync_long_vals, num_sync_long_vals_sz, 
 						num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz, 
+						d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
 						"fft_ri_task_loop");
 			__hpvm__hint(DEVICE); 
 #endif
@@ -517,11 +527,11 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 				// Effectively "rotate" the input window to re-center
 				for (unsigned j = 0; j < 32; j++) {
 					fx_pt fftSample;
-					fftSample = d_sync_long_out_frames[64 * i + j]; // 64 * invocations + offset_j
+					fftSample = d_sync_long_out_frames_arg[64 * i + j]; // 64 * invocations + offset_j
 					fft_in_real[32 + j] = (float) creal(fftSample);
 					fft_in_imag[32 + j] = (float) cimagf(fftSample);
 
-					fftSample = d_sync_long_out_frames[64 * i + 32 + j]; // 64 * invocations + offset_j
+					fftSample = d_sync_long_out_frames_arg[64 * i + 32 + j]; // 64 * invocations + offset_j
 					fft_in_real[j] = (float) crealf(fftSample);
 					fft_in_imag[j] = (float) cimagf(fftSample);
 				}
@@ -529,7 +539,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 			else {
 				for (unsigned j = 0; j < 64; j++) {
 					fx_pt fftSample;
-					fftSample = d_sync_long_out_frames[64 * i + j]; // 64 * invocations + offset_j
+					fftSample = d_sync_long_out_frames_arg[64 * i + j]; // 64 * invocations + offset_j
 					fft_in_real[j] = (float) crealf(fftSample);
 					fft_in_imag[j] = (float) cimagf(fftSample);
 					DO_LIMITS_ANALYSIS(if (fft_in_real[j] < min_input) { min_input = fft_in_real[j]; }
@@ -855,15 +865,20 @@ __attribute__ ((noinline)) void do_rcv_fft_work_Wrapper(fx_pt1* fft_ar_r, size_t
 				fx_pt1* fft_ar_i, size_t fft_ar_i_sz /*= FRAME_EQ_IN_MAX_SIZE*/,
 				unsigned* num_sync_long_vals, size_t num_sync_long_vals_sz /*= sizeof(unsigned)*/,
 				unsigned* num_fft_outs, size_t num_fft_outs_sz /*= sizeof(unsigned)*/,
-				unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz) {
+				unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz,
+				fx_pt * d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/) {
+
 #if defined(HPVM) 
 			void* Section = __hetero_section_begin();
-			void* T = __hetero_task_begin(5, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
+			void* T = __hetero_task_begin(6, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
 					fft_ar_i, fft_ar_i_sz, num_fft_outs, num_fft_outs_sz,
 					num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
-					5, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
+					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+					6, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
 					num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
-					fft_ar_i, fft_ar_i_sz, num_fft_outs, num_fft_outs_sz, "rcv_fft_task");
+					fft_ar_i, fft_ar_i_sz, num_fft_outs, num_fft_outs_sz, 
+					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+					"rcv_fft_task");
 #endif
 
 #if !defined(HPVM)
@@ -876,7 +891,8 @@ __attribute__ ((noinline)) void do_rcv_fft_work_Wrapper(fx_pt1* fft_ar_r, size_t
 #endif
 #endif
 				do_rcv_fft_work(fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, num_sync_long_vals, num_sync_long_vals_sz, 
-						num_fft_outs, num_fft_outs_sz, num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz);
+						num_fft_outs, num_fft_outs_sz, num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
+						d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz);
 
 
 #if !defined(HPVM)
@@ -1266,7 +1282,7 @@ __attribute__((noinline))  void ffir_Wrapper2(fx_pt1 * signal_power_arg /*= sign
 __attribute__ ((noinline)) void detect_early_exit_Wrapper(
 		fx_pt * cmpx_conj_out_arg /*= cmpx_conj_out -> global*/, size_t cmpx_conj_out_arg_sz /*= CMP_CONJ_MAX_SIZE*/,
 		unsigned num_inputs) {
-#if defined(HPVM) 
+#if defined(HPVM)  && false
 	void* Section = __hetero_section_begin();
 			void * T = __hetero_task_begin(2, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs,
 					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task_body");
@@ -1281,13 +1297,15 @@ __attribute__ ((noinline)) void detect_early_exit_Wrapper(
 				//DO_NUM_IOS_ANALYSIS(printf("Calling division: IN %u OUT %u : CMAG %u \n", num_mavg64_vals, num_cdiv_vals, num_cmag_vals));
 				// Ensure we've picked the MIN(num_mavg64_vals, num_cmag_vals) -- should have an a-priori known relationship!
 				if (num_mavg64_vals > num_cmag_vals) {
-					//printf("ERROR : num_mavg64_vals = %u > %u = num_cmag_vals\n", num_mavg64_vals, num_cmag_vals);
+					cmpx_conj_out_arg[0] = cmpx_conj_out_arg[0];
+
+					printf("ERROR : num_mavg64_vals = %u > %u = num_cmag_vals\n", num_mavg64_vals, num_cmag_vals);
 					// TODO: The following exit call causes the warning "Begin and end marker functions are not correctly nested!" 
 					// This is expected; but as along the this if path isn't take at runtime everything will run as expected
-					exit(-8);
+					//exit(-8);
 				}
 			}
-#if defined(HPVM) 
+#if defined(HPVM)  && false
 			 __hetero_task_end(T);
                         __hetero_section_end(Section);
 #endif
@@ -1296,14 +1314,14 @@ __attribute__ ((noinline)) void detect_early_exit_Wrapper(
 __attribute__((noinline))  void detect_early_exit_Wrapper2(
 		fx_pt * cmpx_conj_out_arg /*= cmpx_conj_out -> global*/, size_t cmpx_conj_out_arg_sz /*= CMP_CONJ_MAX_SIZE*/,
 		unsigned num_inputs) {
-#if defined(HPVM) 
+#if defined(HPVM)  && false
 	void* Section = __hetero_section_begin();
 			void * T = __hetero_task_begin(2, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs,
 					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task_Wrapper2");
 #endif
 			detect_early_exit_Wrapper(cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs);
 
-#if defined(HPVM)
+#if defined(HPVM) && false
 			__hetero_task_end(T);
 			__hetero_section_end(Section);
 #endif
@@ -1885,17 +1903,22 @@ __attribute__ ((noinline)) void compute(unsigned num_inputs, fx_pt * input_data_
 #endif
 
 #if defined(HPVM) 
-			void * T11 = __hetero_task_begin(5, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
+			void * T11 = __hetero_task_begin(6, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
 					fft_ar_i, fft_ar_i_sz, num_fft_outs, num_fft_outs_sz,
 					num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
-					5, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
+					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+					6, num_sync_long_vals, num_sync_long_vals_sz, fft_ar_r, fft_ar_r_sz,
 					num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
-					fft_ar_i, fft_ar_i_sz, num_fft_outs, num_fft_outs_sz, "rcv_fft_wrapper1_task");
+					fft_ar_i, fft_ar_i_sz, num_fft_outs, num_fft_outs_sz, 
+					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+					"rcv_fft_wrapper1_task");
 #endif
 			{
 				do_rcv_fft_work_Wrapper(fft_ar_r, fft_ar_r_sz, fft_ar_i, fft_ar_i_sz, 
 						num_sync_long_vals, num_sync_long_vals_sz,
-                                                num_fft_outs, num_fft_outs_sz, num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz);
+                                                num_fft_outs, num_fft_outs_sz, num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
+						d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz
+						);
 			}
 #if defined(HPVM) 
 			__hetero_task_end(T11);

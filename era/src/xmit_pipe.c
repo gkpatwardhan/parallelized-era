@@ -72,7 +72,8 @@ X. OUTPUT : <some number of complex numbers?>
 #include "hetero.h"
 #endif
 
-//#define DEVICE CPU_TARGET
+
+#undef HPVM  // TODO: HPVM: REMOVE ME
 
 #ifdef INT_TIME
 /* This is XMIT PIPE internal Timing information (gathering resources) */
@@ -2714,6 +2715,20 @@ DEBUG(printf(" init d_pilot_car[%2u][%2u] = %u\n", i, j, d_pilot_carriers_org[i]
 DEBUG(printf("\n"));
 }
 
+int do_dummy_run() {
+	while(0) {
+		exit(-1);
+	}
+	return 1;
+}
+
+int do_ofdm_carrier_allocator_cvc_impl_work(int noutput_items,
+		int ninput_items,
+		float * in_real, float * in_imag, // complex numbers
+		float * out_real, float * out_imag, // complex numbers
+		int* d_pilot_carriers, size_t d_pilot_carriers_sz,
+		int* d_occupied_carriers, size_t d_occupied_carriers_sz
+		) {
 const float d_sync_words_imag[d_num_sync_words][d_size_sync_words] = {
 	{
 		0.0,
@@ -3248,20 +3263,7 @@ const float d_sync_words_real[d_num_sync_words][d_size_sync_words] = {
 	}
 };
 
-int do_dummy_run() {
-	while(0) {
-		exit(-1);
-	}
-	return 1;
-}
 
-int do_ofdm_carrier_allocator_cvc_impl_work(int noutput_items,
-		int ninput_items,
-		float * in_real, float * in_imag, // complex numbers
-		float * out_real, float * out_imag, // complex numbers
-		int* d_pilot_carriers, size_t d_pilot_carriers_sz,
-		int* d_occupied_carriers, size_t d_occupied_carriers_sz
-		) {
 	/* const gr_complex *in = (const gr_complex *) input_items[0]; */
 	/* gr_complex *out = (gr_complex *) output_items[0]; */
 	/* std::vector<tag_t> tags; */
@@ -3554,7 +3556,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 	void* Section = __hetero_section_begin();
 	void* T1 = __hetero_task_begin(2, ofc_res, ofc_res_sz, input_real, input_real_sz, 
 			1, input_real, input_real_sz, "logging_task");
-	__hpvm__hint(CPU_TARGET);
+	__hpvm__hint(DEVICE);
 #endif
 	{
 		int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
@@ -3594,7 +3596,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 				ofc_res, ofc_res_sz,
 				output_real, output_real_sz, output_imag, output_imag_sz,
 				2, output_real, output_real_sz, output_imag, output_imag_sz, "xmit_hw_fft_task");
-		__hpvm__hint(CPU_TARGET);
+		__hpvm__hint(DEVICE);
 #endif
 
 		float scale = 1 / sqrt(52.0); // HPVM: Copied from do_xmit_pipeline in T6
@@ -3875,7 +3877,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 
 #if defined(HPVM)
 							void* T3 = __hetero_task_begin(1, input_real, input_real_sz, 1, input_real, input_real_sz, "logging_end_task");
-							__hpvm__hint(CPU_TARGET);
+							__hpvm__hint(DEVICE);
 #endif
 
 							DO_LIMITS_ANALYSIS(printf("DO_XMIT_FFT_WORK : min_input = %.15g  max_input = %.15g\n", min_input, max_input));
@@ -4008,14 +4010,15 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						__hpvm__hint(CPU_TARGET); // TODO: HPVM: This task isn't running on fpga correctly for some reason; ERA crashes when this task is placed on fpga
 #endif
 
-#ifdef INT_TIME
+#if defined(INT_TIME) && !defined(HPVM)
 						gettimeofday(&x_phdrgen_start, NULL);
 #endif
 
 						int mapper_payload_size = d_frame->n_encoded_bits;
 						// uint8_t pckt_hdr_out[64]; // I think this only needs to be 48 bytes...
 						*pckt_hdr_len = do_packet_header_gen(mapper_payload_size, pckt_hdr_out, d_ofdm, d_ofdm_sz, d_frame, d_frame_sz);
-#ifdef INT_TIME
+
+#if defined(INT_TIME) && !defined(HPVM)
 						gettimeofday(&x_phdrgen_stop, NULL);
 						x_phdrgen_sec += x_phdrgen_stop.tv_sec - x_phdrgen_start.tv_sec;
 						x_phdrgen_usec += x_phdrgen_stop.tv_usec - x_phdrgen_start.tv_usec;
@@ -4133,7 +4136,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_frame, d_frame_sz,
 								d_pilot_carriers, d_pilot_carriers_sz,
 								ofc_res, ofc_res_sz, "carrier_alloc_task");
-						__hpvm__hint(CPU_TARGET); // TODO: HPVM: Running this task on fpga gives lots of issues as this task uses constant globals
+						__hpvm__hint(DEVICE); // TODO: HPVM: Running this task on fpga gives lots of issues as this task uses constant globals
 #endif
 
 						// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));
@@ -4186,7 +4189,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								cycpref_out_imag, cycpref_out_imag_sz,
 								2, cycpref_out_real, cycpref_out_real_sz, cycpref_out_imag, cycpref_out_imag_sz,
 								"cyclic_prefix_task");
-						__hpvm__hint(CPU_TARGET);
+						__hpvm__hint(DEVICE);
 #endif
 
 						//#include "gold_fft_outputs.c"
