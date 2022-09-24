@@ -978,6 +978,7 @@ void sdr_decode_ofdm(ofdm_param* ofdm, size_t ofdm_sz /*= sizeof(ofdm_param)*/,
 		printf("Calling do_sdr_decoding\n");
 		do_sdr_decoding(frame->n_data_bits, ofdm->n_cbps, *d_ntraceback_arg, inMemory, outMemory);
 		printf("Done with do_sdr_decoding\n");
+		printf("confirming: done with do_sdr_decoding\n");
 
 #if defined(HPVM) && defined(SDR_HPVM)
 		__hetero_task_end(T2);
@@ -990,6 +991,7 @@ void sdr_decode_ofdm(ofdm_param* ofdm, size_t ofdm_sz /*= sizeof(ofdm_param)*/,
 
 
 		{
+		printf("Inside sdr_decode_end_task\n");
 #ifdef INT_TIME
 		gettimeofday(&dodec_stop, NULL);
 		dodec_sec  += dodec_stop.tv_sec  - dodec_start.tv_sec;

@@ -49,7 +49,7 @@ void sdr_descrambler(uint8_t* in, int psdusize, char* out_msg) //definition
   int bit;
   int index = 0;
   int mod = 0;
-  for(int i = 7; i < (psdusize*8)+16; i++) { // 2 bytes more than psdu_size -> convert to bits
+  for(uint32_t i = 7; i < (psdusize*8)+16; i++) { // 2 bytes more than psdu_size -> convert to bits
     feedback = ((!!(state & 64))) ^ (!!(state & 8));
     bit = feedback ^ (*(in+i) & 0x1);
     index = i/8;

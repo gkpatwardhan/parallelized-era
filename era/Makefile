@@ -8,7 +8,7 @@ INCLUDES +=
 LFLAGS += -lm -lrt
 
 HPVM_SRC=main.c
-ALL_SRCS:= $(foreach f, $(wildcard src/*.c), $(shell basename $(f)))
+ALL_SRCS:=$(foreach f, $(wildcard src/*.c), $(shell basename $(f)))
 OTHER_SRCS:= $(filter-out $(HPVM_SRC),$(ALL_SRCS))
 
 $(info $$OTHER_SRCS is [${OTHER_SRCS}])
@@ -258,7 +258,7 @@ endif
 ifeq ($(TARGET), fpga)
 $(HOST) $(KERNEL) $(KERNEL_OCL) $(AOCX): $(POST_HCC)
 	$(OPT) -S -inline $< -o $(BUILD_DIR)/main.hpvm.ll
-	$(LLVM_BUILD_DIR)/bin/hpvm2fpga -hm=$(HOST) -km=$(KERNEL) -clm=$(KERNEL_OCL) -cxm=$(AOCX) $(FPGA_OPTFLAGS) $(BUILD_DIR)/main.hpvm.ll
+	$(LLVM_BUILD_DIR)/bin/hpvm2fpga -hm=$(HOST) -km=$(KERNEL) -clm=$(KERNEL_OCL) -cxm=$(AOCX) $(FPGA_OPTFLAGS) $(BUILD_DIR)/main.hpvm.ll --no-tlp
 else
 $(HOST) $(KERNEL): $(POST_HCC)
 	$(OPT) -enable-new-pm=0 -inline $(GENHPVM_OPTFLAGS) $(HPVM_OPTSO) $(GRAPHOPTS) $(HPVM_OPTFLAGS) -S $< -o $(HOST)

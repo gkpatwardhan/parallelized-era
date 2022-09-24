@@ -35,9 +35,9 @@ typedef float complex fx_pt_ext2;
 
 
 //int d_frame_bytes;
-int d_frame_encoding;
-int d_frame_symbols;
-int d_frame_mod;
+//int d_frame_encoding;
+//int d_frame_symbols;
+//int d_frame_mod;
 
 
 #ifdef INT_TIME
@@ -164,6 +164,8 @@ const int interleaver_pattern[48] = {  0 , 3, 6, 9,12,15,18,21,
   DEBUG(printf("  Setting msg_psdu to %u\n", *msg_psdu));
   
   // NOTE: Currently we ONLY work in BPSK_1_2 -- all non-BPSK return a "false" (bad message)
+  int d_frame_encoding;
+  int d_frame_symbols;
   switch(r) {
   case 11:
     d_frame_encoding = 0;

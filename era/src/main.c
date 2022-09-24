@@ -662,6 +662,7 @@ void fuse_maps(int n_recvd_in,
 	fx_pt1 * the_correlation_arg /*= the_correlation -> global*/, size_t the_correlation_arg_sz /*= DIVIDE_MAX_SIZE*/,
 	fx_pt * sync_short_out_frames_arg /*= sync_short_out_frames -> global*/, size_t sync_short_out_frames_arg_sz /*=320*/,
 	fx_pt * d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+	fx_pt* frame_d_arg, size_t frame_d_arg_sz,
 	// Local variable used by do_rcv_ff_work (task in do_recv_pipeline)
         unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz,
 	// 		Local variablse used by decode_signal (task in do_recv_pipeline)
@@ -683,7 +684,7 @@ void fuse_maps(int n_recvd_in,
 
 #if (defined(HPVM) && defined(HPVM_RECV_PIPELINE)) && true
 	// 38 inputs, 3 outputs
-	void * T1 = __hetero_task_begin(38, n_recvd_in, recvd_in_real, recvd_in_real_sz,
+	void * T1 = __hetero_task_begin(39, n_recvd_in, recvd_in_real, recvd_in_real_sz,
 		recvd_msg, recvd_msg_sz, recvd_msg_len, recvd_msg_len_sz,
 		recvd_in_imag, recvd_in_imag_sz,
 		// Start variables used by do_recv_pipeline
@@ -707,6 +708,7 @@ void fuse_maps(int n_recvd_in,
 		the_correlation_arg, the_correlation_arg_sz,
 		sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 		d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+		frame_d_arg, frame_d_arg_sz,
 		// Local variable used by do_rcv_ff_work (task in do_recv_pipeline)
         	num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
 		// Local variables for decode_signal, a task in do_recv_pipeline
@@ -721,9 +723,21 @@ void fuse_maps(int n_recvd_in,
                 outMemory, outMemory_sz,
                 d_ntraceback_arg, d_ntraceback_arg_sz,
 		// End variables used by do_recv_pipeline
-		3, recvd_msg_len, recvd_msg_len_sz,
+		15, recvd_msg_len, recvd_msg_len_sz,
 		recvd_in_real, recvd_in_real_sz,
 		recvd_in_imag, recvd_in_imag_sz,
+		delay16_out_arg, delay16_out_arg_sz,
+                input_data_arg, input_data_sz,
+                cmpx_conj_out_arg, cmpx_conj_out_arg_sz,
+                cmpx_mult_out_arg, cmpx_mult_out_arg_sz,
+                correlation_complex_arg, correlation_complex_arg_sz,
+                correlation_arg, correlation_arg_sz,
+                signal_power_arg, signal_power_arg_sz,
+                avg_signal_power_arg, avg_signal_power_arg_sz,
+                the_correlation_arg, the_correlation_arg_sz,
+                sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
+                d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+                frame_d_arg, frame_d_arg_sz,
 		"recieve_pipeline_task");
 #endif
 
@@ -758,6 +772,7 @@ void fuse_maps(int n_recvd_in,
 		the_correlation_arg, the_correlation_arg_sz,
 		sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 		d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+		frame_d_arg, frame_d_arg_sz,
 		// 		Local variable used by do_rcv_ff_work (task in do_recv_pipeline)
         	num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
 		// 		Local variables for decode_signal, a task in do_recv_pipeline
@@ -1008,7 +1023,7 @@ void * receive_and_fuse_maps_impl(Observation * observations /*=observations -> 
 
 #if (defined(HPVM) && defined(HPVM_RECV_PIPELINE)) && true
 			// 41 inputs, 7 outputs
-			void * LaunchInner = __hetero_launch((void *) fuse_maps, 41,
+			void * LaunchInner = __hetero_launch((void *) fuse_maps, 42,
 				n_recvd_in,
 				recvd_in_real, recvd_in_real_sz,
 				recvd_in_imag, recvd_in_imag_sz,
@@ -1043,6 +1058,7 @@ void * receive_and_fuse_maps_impl(Observation * observations /*=observations -> 
 				the_correlation, DIVIDE_MAX_SIZE * sizeof(fx_pt1),
 				sync_short_out_frames, 320 * sizeof(fx_pt),
 				d_sync_long_out_frames, SYNC_L_OUT_MAX_SIZE * sizeof(fx_pt),
+				frame_d, DELAY_320_MAX_OUT_SIZE * sizeof(fx_pt),
 				// 	Local variable used by do_rcv_ff_work (task in do_recv_pipeline)
         			&num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
 				//      Local variablse used by decode_signal (task in do_recv_pipeline)
@@ -1057,13 +1073,26 @@ void * receive_and_fuse_maps_impl(Observation * observations /*=observations -> 
 				outMemory, outMemory_sz,
 				&d_ntraceback, d_ntraceback_arg_sz,
 				// End variables used by do_recv_pipeline
-				6,
+				18,
 				recvd_in_real, recvd_in_real_sz,
 				recvd_in_imag, recvd_in_imag_sz,
 				&recvd_msg_len, recvd_msg_len_sz,
 				uncmp_data, uncmp_data_sz,
 				observations, observations_sz,
-				&dec_bytes, dec_bytes_sz);
+				&dec_bytes, dec_bytes_sz,
+				delay16_out, DELAY_16_MAX_OUT_SIZE * sizeof(fx_pt),
+                                input_data, (DELAY_16_MAX_OUT_SIZE - 16) * sizeof(fx_pt),
+                                cmpx_conj_out, CMP_CONJ_MAX_SIZE * sizeof(fx_pt),
+                                cmpx_mult_out, CMP_MULT_MAX_SIZE * sizeof(fx_pt),
+                                correlation_complex, FIRC_MAVG48_MAX_SIZE * sizeof(fx_pt),
+                                correlation, CMP2MAG_MAX_SIZE * sizeof(fx_pt1),
+                                signal_power, CMP2MAGSQ_MAX_SIZE * sizeof(fx_pt1),
+                                avg_signal_power, FIR_MAVG64_MAX_SIZE * sizeof(fx_pt1),
+                                the_correlation, DIVIDE_MAX_SIZE * sizeof(fx_pt1),
+                                sync_short_out_frames, 320 * sizeof(fx_pt),
+                                d_sync_long_out_frames, SYNC_L_OUT_MAX_SIZE * sizeof(fx_pt),
+                                frame_d, DELAY_320_MAX_OUT_SIZE * sizeof(fx_pt)
+				);
 			__hetero_wait(LaunchInner);
 #else
 			fuse_maps(n_recvd_in,
@@ -2034,7 +2063,7 @@ int main(int argc, char * argv[]) {
 	printf("Initializing the Transmit pipeline...\n");
 	xmit_pipe_init(); // Initialize the IEEE SDR Transmit Pipeline
 	printf("Initializing the Receive pipeline...\n");
-	recv_pipe_init();
+	recv_pipe_init(fir_input, firc_input);
 	printf("Initializing the Computer Vision toolset...\n");
 
 #ifdef USE_OLD_MODEL

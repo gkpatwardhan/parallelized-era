@@ -87,7 +87,7 @@ extern uint64_t r_fHcvtout_usec;
 #endif
 #endif
 
-void recv_pipe_init();
+void recv_pipe_init(fx_pt1* fir_input, fx_pt* firc_input);
 
 //#ifdef HPVM
 void do_recv_pipeline(int num_recvd_vals, float* recvd_in_real, size_t recvd_in_real_sz,
@@ -118,6 +118,7 @@ void do_recv_pipeline(int num_recvd_vals, float* recvd_in_real, size_t recvd_in_
 		fx_pt1* the_correlation_arg /*= the_correlation -> global*/, size_t the_correlation_arg_sz /*= DIVIDE_MAX_SIZE*/,
 		fx_pt* sync_short_out_frames_arg /*= sync_short_out_frames -> global*/, size_t sync_short_out_frames_arg_sz /*=320*/,
 		fx_pt* d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+		fx_pt* frame_d_arg, size_t frame_d_arg_sz,
 		// Local variable used by do_rcv_ff_work (task in do_recv_pipeline)
 		unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz,
 		// Local variablse used by decode_signal (task in do_recv_pipeline)

@@ -3708,8 +3708,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #if defined(PARALLEL_LOOP)
 			void* SectionLoop = __hetero_section_begin();
 #else
-		__hpvm__hint(CPU_TARGET); // TODO: HPVM: Can't put this on the fpga; getting error: WARNING: this target does not support the llvm.stacksave intrinsic.
-// Couldn't find induction Variable in loop!
+		__hpvm__hint(FPGA_TARGET); 
 
 #endif
 
@@ -3743,13 +3742,11 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						output_real, output_real_sz, output_imag, output_imag_sz,
 						ofc_res, ofc_res_sz,
 						2, output_real, output_real_sz, output_imag, output_imag_sz, "fft_ri_task");
-				__hpvm__hint(CPU_TARGET);
+				__hpvm__hint(FPGA_TARGET);
 #endif
 				int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
 				int k = iteration * size;
-				if (k > n_inputs + (size - 1)) {
-					continue;
-				}
+				if (!(k > n_inputs + (size - 1))) {
 				float fft_in_real[64];
 				float fft_in_imag[64];
 
@@ -3840,7 +3837,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #if defined(HPVM) && defined(PARALLEL_LOOP)
 								__hpvm__task(FFT_TASK, fft_ri);
 #endif
-								fft_ri(fft_in_real, fft_in_imag, inverse, false, size, log_size);
+								fft_ri(fft_in_real, fft_in_imag, inverse, false, size, log_size); 
 
 								for (int i = 0; i < size; i++) {
 									// Swap sign on the "odd" FFT results (re-cluster energy around zero?)
@@ -3865,6 +3862,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 										if (k < 4) {
 										printf("\n");
 										});
+							}
 							} // for (k = 0 .. n_inputs
 #if defined(HPVM)
 #if defined(PARALLEL_LOOP)
@@ -3986,7 +3984,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						x_domapwk_sec += x_domapwk_stop.tv_sec - x_domapwk_start.tv_sec;
 						x_domapwk_usec += x_domapwk_stop.tv_usec - x_domapwk_start.tv_usec;
 #endif
-						printf("Done with do_mapper_work\n");
+						//printf("Done with do_mapper_work\n");
 #if defined(HPVM)
 						__hetero_task_end(T2);
 						__hetero_section_end(Section);
@@ -4136,7 +4134,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_frame, d_frame_sz,
 								d_pilot_carriers, d_pilot_carriers_sz,
 								ofc_res, ofc_res_sz, "carrier_alloc_task");
-						__hpvm__hint(DEVICE); // TODO: HPVM: Running this task on fpga gives lots of issues as this task uses constant globals
+						__hpvm__hint(CPU_TARGET); // TODO: HPVM: Running this task on fpga gives lots of issues as this task uses constant globals
 #endif
 
 						// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));

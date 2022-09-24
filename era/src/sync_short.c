@@ -96,7 +96,7 @@ void sync_short( unsigned num_inputs, fx_pt input_sample[SYNC_S_MAX_IN_SIZE], fx
     //   DEBUG(printf(" came to the MAX_SAMPLES (%u)...\n", MAX_SAMPLES));
     // }
   } else { // if (frame)
-    printf("ERROR: Couldn't find the start_Frame in sync_short... never crossed threshold?\n");
+    //printf("ERROR: Couldn't find the start_Frame in sync_short... never crossed threshold?\n");
     exit(-9);
   } // if (frame)
  #ifdef INT_TIME

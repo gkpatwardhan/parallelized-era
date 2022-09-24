@@ -47,6 +47,7 @@
 //
 
 //#undef HPVM // TODO: REMOVE ME
+//
 
 #if defined(HPVM)
 #include "hpvm.h"
@@ -136,8 +137,8 @@ uint64_t r_fHcvtout_usec = 0LL;
 
 #endif
 
-
-/*fx_pt  delay16_out[DELAY_16_MAX_OUT_SIZE];
+/*
+fx_pt  delay16_out[DELAY_16_MAX_OUT_SIZE];
 fx_pt  cmpx_conj_out[CMP_CONJ_MAX_SIZE];
 fx_pt  firc_input[CMP_MULT_MAX_SIZE + COMPLEX_COEFF_LENGTH]; // holds cmpx_mult_out but pre-pads with zeros
 fx_pt * cmpx_mult_out = &(firc_input[COMPLEX_COEFF_LENGTH]);
@@ -162,6 +163,7 @@ fx_pt d_sync_long_out_frames[SYNC_L_OUT_MAX_SIZE]; // sync_long_output
 // The input data goes through a delay16 that simply re-indexes the data (prepending 16 0+0i values)...
 fx_pt * input_data = &delay16_out[16]; // [2*(RAW_DATA_IN_MAX_SIZE + 16)];  // Holds the input data (plus a "front-pad" of 16 0's for delay16
 */
+
 
 
 void compute(unsigned num_inputs, fx_pt * input_data, size_t input_data_sz,
@@ -190,6 +192,7 @@ void compute(unsigned num_inputs, fx_pt * input_data, size_t input_data_sz,
 		fx_pt1 * the_correlation_arg /*= the_correlation -> global*/, size_t the_correlation_arg_sz /*= DIVIDE_MAX_SIZE*/,
 		fx_pt * sync_short_out_frames_arg /*= sync_short_out_frames -> global*/, size_t sync_short_out_frames_arg_sz /*=320*/,
 		fx_pt * d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+		fx_pt* frame_d_arg, size_t frame_d_arg_sz,
 		// Local variable used by do_rcv_ff_work (task in compute)
 		unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz,
 		// Local variablse used by decode_signal (task in compute)
@@ -280,9 +283,8 @@ void free_RECV_FFT_HW_RESOURCES() {
 #endif // RECV_HW_FFT
 
 void
-recv_pipe_init() {
+recv_pipe_init(fx_pt1* fir_input, fx_pt* firc_input) {
 	// Initialize the pre-pended zero segments for fir_input and firc_input
-	fx_pt1  fir_input[CMP2MAGSQ_MAX_SIZE + COEFF_LENGTH]; // holds signal_power but pre-pads with zeros
 	for (int i = 0; i < COEFF_LENGTH; i++) {
 		fir_input[i] = 0;
 	}
@@ -354,8 +356,9 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 
 	void* T1 = __hetero_task_begin(1, num_sync_long_vals, num_sync_long_vals_sz, 
 			1, num_sync_long_vals, num_sync_long_vals_sz, 
-			"detect_early_exit_task");
-	__hpvm__hint(DEVICE);
+			"detect_early_exit_task_rcv_fft");
+	__hpvm__hint(CPU_TARGET); // TODO: HPVM: Putting this task on the fpga produces error : llvm-ocl: /home/gaurip2/hpvm/hpvm/hpvm/llvm/tools/hpvm/projects/llvm-ocl/lib/Target/CBackend/CBackend.cpp:4368: void llvm::CWriter::visitBranchInst(llvm::BranchInst&): Assertion `ImmPostDomm && "Nearest common denominator must exist!"' failed. (logs in folder-NearestCommonDenominatorError
+
 #endif
 	DEBUG(printf("\nSetting up for FFT...\n"));
 	// FFT
@@ -384,7 +387,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 			returnValue, returnValue_sz, 
 			d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
 			"recv_hw_fft_task");
-	__hpvm__hint(DEVICE);
+	__hpvm__hint(DEVICE); 
 #endif
 	{
 
@@ -481,12 +484,13 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 			d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
 			"fft_ri_for_loop_wrappertask");
 #if !defined(PARALLEL_LOOP)
-			__hpvm__hint(DEVICE); 
+			__hpvm__hint(CPU_TARGET);  // TODO: Put me on the fpga
 #endif
 #if defined(PARALLEL_LOOP)
 	void* Section_Loop = __hetero_section_begin();
 #endif
 #endif
+
 	{ // The FFT only uses one set of input/outputs (the fft_in) and overwrites the inputs with outputs
 		for (unsigned i = 0; i < MAX_FFT_FRAMES /*SYNC_L_OUT_MAX_SIZE/64*/; i++) { // This is the "spin" to invoke the FFT
 
@@ -503,7 +507,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 						num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz, 
 						d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
 						"fft_ri_task_loop");
-			__hpvm__hint(DEVICE); 
+			__hpvm__hint(FPGA_TARGET); 
 #endif
 
 			unsigned num_fft_frames = ((*num_sync_long_vals) + 63) / 64;
@@ -556,7 +560,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 #if defined(HPVM) && defined(PARALLEL_LOOP)
 			__hpvm__task(FFT_TASK, fft_ri);
 #endif
-			fft_ri(fft_in_real, fft_in_imag, do_inverse, do_shift, num_samples, log_nsamples); // not-inverse, but shifting
+			fft_ri(fft_in_real, fft_in_imag, do_inverse, do_shift, num_samples, log_nsamples); // not-inverse, but shifting 
 			DEBUG(printf("  FFT Output %4u \n", i);
 					for (unsigned j = 0; j < 64; j++) {
 					printf("   FFT_OUT %4u %2u : %6u %12.8f %12.8f\n", i, j, 64 * i + j, fft_in_real[j], fft_in_imag[j]);
@@ -620,7 +624,7 @@ __attribute__ ((noinline)) void pre_process_input_for_compute(float * recvd_in_i
 			recvd_in_imag, recvd_in_imag_sz,
 			num_recvd_vals,
 			1, input_data_arg, input_data_arg_sz, "process_input_to_compute_task");
-	__hpvm__hint(DEVICE);
+	__hpvm__hint(DEVICE); 
 #endif
 #if !defined(HPVM)
 	DEBUG(printf("In do_recv_pipeline: num_received_vals = %u\n", num_recvd_vals); fflush(stdout));
@@ -710,6 +714,7 @@ void do_recv_pipeline(int num_recvd_vals, float * recvd_in_real, size_t recvd_in
 		fx_pt1 * the_correlation_arg /*= the_correlation -> global*/, size_t the_correlation_arg_sz /*= DIVIDE_MAX_SIZE*/,
 		fx_pt * sync_short_out_frames_arg /*= sync_short_out_frames -> global*/, size_t sync_short_out_frames_arg_sz /*=320*/,
 		fx_pt * d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+		fx_pt* frame_d_arg, size_t frame_d_arg_sz,
 		// Local variable used by do_rcv_ff_work (task in do_recv_pipeline)
 		unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz,
 		// Local variablse used by decode_signal (task in do_recv_pipeline)
@@ -745,7 +750,7 @@ void do_recv_pipeline(int num_recvd_vals, float * recvd_in_real, size_t recvd_in
 #endif
 
 #if defined(HPVM)
-			void * T1 = __hetero_task_begin(36,
+			void * T1 = __hetero_task_begin(37,
 					num_recvd_vals,
 					recvd_msg_len, recvd_msg_len_sz,
 					recvd_msg, recvd_msg_sz,
@@ -774,6 +779,7 @@ void do_recv_pipeline(int num_recvd_vals, float * recvd_in_real, size_t recvd_in
 					the_correlation_arg, the_correlation_arg_sz,
 					sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+					frame_d_arg, frame_d_arg_sz,
 					// Local variable used by do_rcv_ff_work (task in compute)
 					num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
 					// Local variables for decode_signal, a task in compute()
@@ -788,9 +794,22 @@ void do_recv_pipeline(int num_recvd_vals, float * recvd_in_real, size_t recvd_in
 					outMemory, outMemory_sz,
 					d_ntraceback_arg, d_ntraceback_arg_sz,
 					// Outputs
-					3,
+					15,
 					input_data_arg, input_data_arg_sz,
-					recvd_msg_len, recvd_msg_len_sz, recvd_msg, recvd_msg_sz,
+					recvd_msg_len, recvd_msg_len_sz, 
+					recvd_msg, recvd_msg_sz,
+					delay16_out_arg, delay16_out_arg_sz,
+                                        input_data_arg, input_data_arg_sz,
+                                        cmpx_conj_out_arg, cmpx_conj_out_arg_sz,
+                                        cmpx_mult_out_arg, cmpx_mult_out_arg_sz,
+                                        correlation_complex_arg, correlation_complex_arg_sz,
+                                        correlation_arg, correlation_arg_sz,
+                                        signal_power_arg, signal_power_arg_sz,
+                                        avg_signal_power_arg, avg_signal_power_arg_sz,
+                                        the_correlation_arg, the_correlation_arg_sz,
+                                        sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
+                                        d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+                                        frame_d_arg, frame_d_arg_sz,
 					"recv_pipeline_impl_task");
 
 #endif
@@ -826,6 +845,7 @@ void do_recv_pipeline(int num_recvd_vals, float * recvd_in_real, size_t recvd_in
 					the_correlation_arg, the_correlation_arg_sz,
 					sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+                                        frame_d_arg, frame_d_arg_sz,
 					// Local variable used by do_rcv_ff_work (task in compute)
 					num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz,
 					// Local variables for decode_signal, a task in compute()
@@ -915,7 +935,7 @@ __attribute__ ((noinline)) void logging_Wrapper(unsigned num_inputs, fx_pt * inp
 			void* Section = __hetero_section_begin();
 			void* T = __hetero_task_begin(2, num_inputs, input_data_arg, input_data_arg_sz,
 					1, input_data_arg, input_data_arg_sz, "logging_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga
 #endif
 				// uint8_t scrambled_msg[MAX_ENCODED_BITS * 3 / 4];
 				DEBUG(for (int ti = 0; ti < num_inputs /*RAW_DATA_IN_MAX_SIZE*/; ti++) {
@@ -958,7 +978,7 @@ __attribute__ ((noinline)) void cmplx_conj_Wrapper(unsigned num_inputs,
 			void * T1 = __hetero_task_begin(3, num_inputs, cmpx_conj_out_arg, cmpx_conj_out_arg_sz,
 					delay16_out_arg, delay16_out_arg_sz,
 					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "cmplx_conj_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); // TODO: HPVM: Put me on fpga
 #endif
 
 			{
@@ -1010,7 +1030,7 @@ __attribute__ ((noinline)) void cmplx_mult_Wrapper(fx_pt * cmpx_mult_out_arg, si
 					cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs,
 					input_data_arg, input_data_arg_sz,
 					1, cmpx_mult_out_arg, cmpx_mult_out_arg_sz, "cmplx_mult_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); 
 #endif
 			{
 				unsigned num_del16_vals = num_inputs + 16;
@@ -1064,7 +1084,7 @@ __attribute__ ((noinline)) void ffirc_Wrapper(fx_pt * correlation_complex_arg, s
 			void * T = __hetero_task_begin(3, correlation_complex_arg, correlation_complex_arg_sz,
 					cmpx_mult_out_arg, cmpx_mult_out_arg_sz, num_inputs,
 					1, correlation_complex_arg, correlation_complex_arg_sz, "ffirc_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); 
 #endif
 			{
 				unsigned num_del16_vals = num_inputs + 16;
@@ -1117,7 +1137,7 @@ __attribute__ ((noinline)) void cmplx_mag_Wrapper(fx_pt1 * correlation_arg /*= c
 			void * T = __hetero_task_begin(3, correlation_arg, correlation_arg_sz, num_inputs,
 					correlation_complex_arg, correlation_complex_arg_sz,
 					1, correlation_arg, correlation_arg_sz, "cmplx_mag_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); 
 #endif
 			{
 				unsigned num_del16_vals = num_inputs + 16;
@@ -1171,7 +1191,7 @@ __attribute__ ((noinline)) void cmplx_mag2_Wrapper(fx_pt1 * signal_power_arg /*=
 			void * T = __hetero_task_begin(3, signal_power_arg, signal_power_arg_sz, num_inputs,
 					input_data_arg, input_data_arg_sz,
 					1, signal_power_arg, signal_power_arg_sz, "cmplx_mag2_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); 
 #endif
 			{
 				unsigned num_cmag2_vals = num_inputs;
@@ -1223,7 +1243,7 @@ __attribute__ ((noinline)) void ffir_Wrapper(fx_pt1 * signal_power_arg /*= signa
 			void * T = __hetero_task_begin(3, signal_power_arg, signal_power_arg_sz,
 					avg_signal_power_arg, avg_signal_power_arg_sz, num_inputs,
 					1, avg_signal_power_arg, avg_signal_power_arg_sz, "ffir_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); 
 #endif
 			{
 				DEBUG(printf("\nCalling fir (Moving Average 64)...\n"));
@@ -1285,7 +1305,8 @@ __attribute__ ((noinline)) void detect_early_exit_Wrapper(
 #if defined(HPVM)  && false
 	void* Section = __hetero_section_begin();
 			void * T = __hetero_task_begin(2, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs,
-					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task_body");
+					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task_body_recv");
+			__hpvm__hint(CPU_TARGET);
 #endif
 			{
 				// TODO: I have copied the definition of num_cmag_vals from task T4. Based on that task, Ithink num_cmag_vals and num_del16_vals are identitcal as prior tasks don't modify it; relying on that assumption, I have num_cmag_vals defined in this manner
@@ -1317,7 +1338,7 @@ __attribute__((noinline))  void detect_early_exit_Wrapper2(
 #if defined(HPVM)  && false
 	void* Section = __hetero_section_begin();
 			void * T = __hetero_task_begin(2, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs,
-					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task_Wrapper2");
+					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task_Wrapper2_recv");
 #endif
 			detect_early_exit_Wrapper(cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs);
 
@@ -1338,7 +1359,7 @@ __attribute__ ((noinline)) void division_Wrapper(fx_pt1 * correlation_arg, size_
 			void * T = __hetero_task_begin(4, correlation_arg, correlation_arg_sz, num_inputs,
 					avg_signal_power_arg, avg_signal_power_arg_sz, the_correlation_arg, the_correlation_arg_sz,
 					1, the_correlation_arg, the_correlation_arg_sz, "division_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); 
 #endif
 			{
 #ifdef INT_TIME
@@ -1400,7 +1421,7 @@ __attribute__ ((noinline)) void sync_short_Wrapper(fx_pt * correlation_complex_a
 					3, sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 					ss_freq_offset, ss_freq_offset_sz, num_sync_short_vals, num_sync_short_vals_sz,
 					"sync_short_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(FPGA_TARGET); // TODO: HPVM: Put me on fpga
 #endif
 			{
 				unsigned num_mavg64_vals = num_inputs; // copied from previous task (as prior tasks doesn't change the value of this)
@@ -1434,7 +1455,7 @@ __attribute__ ((noinline)) void sync_short_Wrapper(fx_pt * correlation_complex_a
 				//delay320(frame_d, synch_short_out_frames);
 				DEBUG(for (int ti = 0; ti < 320 + (*num_sync_short_vals); ti++) {
 						printf("  DELAY_320 %5u : FRAME_D %12.8f %12.8f : FRAME %12.8f %12.8f\n", ti,
-								crealf(frame_d[ti]), cimagf(frame_d[ti]), crealf(sync_short_out_frames_arg[ti]),
+								crealf(frame_d_arg[ti]), cimagf(frame_d_arg[ti]), crealf(sync_short_out_frames_arg[ti]),
 								cimagf(sync_short_out_frames_arg[ti]));
 						});
 			}
@@ -1481,17 +1502,21 @@ __attribute__ ((noinline)) void sync_long_Wrapper(float * sl_freq_offset /*local
 		unsigned * num_sync_long_vals /*local*/, size_t num_sync_long_vals_sz /*=1*/,
 		unsigned * num_sync_short_vals /*local*/, size_t num_sync_short_vals_sz /*=1*/,
 		fx_pt * sync_short_out_frames_arg, size_t sync_short_out_frames_arg_sz /*=320*/,
-		fx_pt * d_sync_long_out_frames_arg, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/) {
+		fx_pt * d_sync_long_out_frames_arg, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+		fx_pt* frame_d_arg, size_t frame_d_arg_sz) {
 #if defined(HPVM) 
 	void* Section = __hetero_section_begin();
-			void * T = __hetero_task_begin(5, sl_freq_offset, sl_freq_offset_sz,
+			void * T = __hetero_task_begin(6, sl_freq_offset, sl_freq_offset_sz,
 					num_sync_long_vals, num_sync_long_vals_sz, // ss_freq_offset, ss_freq_offset_sz, 
 					num_sync_short_vals, num_sync_short_vals_sz,
 					sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
-					3, sl_freq_offset, sl_freq_offset_sz, num_sync_long_vals, num_sync_long_vals_sz,
-					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz, "sync_long_task_body");
-			__hpvm__hint(DEVICE); 
+					frame_d_arg, frame_d_arg_sz,
+					4, sl_freq_offset, sl_freq_offset_sz, num_sync_long_vals, num_sync_long_vals_sz,
+					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz, 
+					frame_d_arg, frame_d_arg_sz,
+					"sync_long_task_body");
+			__hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga 
 #endif
 
 			//DO_NUM_IOS_ANALYSIS(printf("Calling sync_long: IN %u\n", *num_sync_short_vals));
@@ -1502,14 +1527,14 @@ __attribute__ ((noinline)) void sync_long_Wrapper(float * sl_freq_offset /*local
 			r_sshort_sec += r_slong_start.tv_sec - r_sshort_start.tv_sec;
 			r_sshort_usec += r_slong_start.tv_usec - r_sshort_start.tv_usec;
 #endif
-			sync_long(*num_sync_short_vals, sync_short_out_frames_arg, frame_d, sl_freq_offset, num_sync_long_vals,
+			sync_long(*num_sync_short_vals, sync_short_out_frames_arg, frame_d_arg, sl_freq_offset, num_sync_long_vals,
 					d_sync_long_out_frames_arg);
 			//DO_NUM_IOS_ANALYSIS(printf("Back from synch_long: OUT num_sync_long_vals = %u\n", *num_sync_long_vals));
 			DEBUG(printf(" sl_freq_offset = %12.8f\n", *sl_freq_offset);
 					for (int ti = 0; ti < 32619; ti++) {
 					printf("  SYNC_LONG_OUT %5u  %12.8f %12.8f : FR_D %12.8f %12.8f : D_FR_L %12.8f %12.8f\n", ti,
 							crealf(sync_short_out_frames_arg[ti]), cimagf(sync_short_out_frames_arg[ti]),
-							crealf(frame_d[ti]), cimagf(frame_d[ti]), crealf(d_sync_long_out_frames_arg[ti]),
+							crealf(frame_d_arg[ti]), cimagf(frame_d_arg[ti]), crealf(d_sync_long_out_frames_arg[ti]),
 							cimagf(d_sync_long_out_frames_arg[ti]));
 					});
 
@@ -1523,23 +1548,28 @@ __attribute__((noinline))  void sync_long_Wrapper2(float * sl_freq_offset /*loca
 		unsigned * num_sync_long_vals /*local*/, size_t num_sync_long_vals_sz /*=1*/,
 		unsigned * num_sync_short_vals /*local*/, size_t num_sync_short_vals_sz /*=1*/,
 		fx_pt * sync_short_out_frames_arg, size_t sync_short_out_frames_arg_sz /*=320*/,
-		fx_pt * d_sync_long_out_frames_arg, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/) {
+		fx_pt * d_sync_long_out_frames_arg, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+		fx_pt* frame_d_arg, size_t frame_d_arg_sz) {
 #if defined(HPVM) 
 	void* Section = __hetero_section_begin();
-			void * T = __hetero_task_begin(5, sl_freq_offset, sl_freq_offset_sz,
+			void * T = __hetero_task_begin(6, sl_freq_offset, sl_freq_offset_sz,
 					num_sync_long_vals, num_sync_long_vals_sz, // ss_freq_offset, ss_freq_offset_sz, 
 					num_sync_short_vals, num_sync_short_vals_sz,
 					sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
-					3, sl_freq_offset, sl_freq_offset_sz, num_sync_long_vals, num_sync_long_vals_sz,
-					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz, "sync_long_task_Wrapper2");
+					frame_d_arg, frame_d_arg_sz,
+					4, sl_freq_offset, sl_freq_offset_sz, num_sync_long_vals, num_sync_long_vals_sz,
+					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz, 
+					frame_d_arg, frame_d_arg_sz,
+					"sync_long_task_Wrapper2");
 #endif
 
 		sync_long_Wrapper(sl_freq_offset, sl_freq_offset_sz,
                                         num_sync_long_vals, num_sync_long_vals_sz, // ss_freq_offset, ss_freq_offset_sz,
                                         num_sync_short_vals, num_sync_short_vals_sz,
                                         sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
-                                        d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz);
+                                        d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+					frame_d_arg, frame_d_arg_sz);
 #if defined(HPVM)
                         __hetero_task_end(T);
                         __hetero_section_end(Section);
@@ -1565,7 +1595,7 @@ __attribute__ ((noinline)) void gr_equalize_Wrapper(fx_pt1 * fft_ar_r/*local*/, 
 					num_sync_long_vals, num_sync_long_vals_sz,
 					4, toBeEqualized, toBeEqualized_sz, equalized, equalized_sz,
 					num_eq_out_bits, num_eq_out_bits_sz, psdu, psdu_sz, "gr_equalize_task_body");
-			 __hpvm__hint(DEVICE);
+			 __hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga
 #endif
 
 			// equalize
@@ -1651,7 +1681,7 @@ __attribute__ ((noinline)) void sdr_descrambler_Wrapper(uint8_t * scrambled_msg 
 			void * T = __hetero_task_begin(4, scrambled_msg, scrambled_msg_sz, psdu, psdu_sz,
 					out_msg_len, out_msg_len_sz, out_msg, out_msg_sz,
 					2, out_msg_len, out_msg_len_sz, out_msg, out_msg_sz, "sdr_descrambler_task_body");
-			__hpvm__hint(DEVICE);
+			__hpvm__hint(DEVICE); 
 #endif
 
 			//descrambler
@@ -1721,6 +1751,7 @@ __attribute__ ((noinline)) void compute(unsigned num_inputs, fx_pt * input_data_
 		fx_pt1 * the_correlation_arg /*= the_correlation -> global*/, size_t the_correlation_arg_sz /*= DIVIDE_MAX_SIZE*/,
 		fx_pt * sync_short_out_frames_arg /*= sync_short_out_frames -> global*/, size_t sync_short_out_frames_arg_sz /*=320*/,
 		fx_pt * d_sync_long_out_frames_arg /*= d_sync_long_out_frames -> global*/, size_t d_sync_long_out_frames_arg_sz /*= SYNC_L_OUT_MAX_SIZE*/,
+		fx_pt* frame_d_arg, size_t frame_d_arg_sz,
 		// 		Local variable used by do_rcv_ff_work (task in compute)
 		unsigned* num_fft_outs_rcv_fft, size_t num_fft_outs_rcv_fft_sz,
 		//              Local variablse used by decode_signal (task in compute)
@@ -1837,7 +1868,7 @@ __attribute__ ((noinline)) void compute(unsigned num_inputs, fx_pt * input_data_
 
 #if defined(HPVM) 
 			void * T7 = __hetero_task_begin(2, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs,
-					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task");
+					1, cmpx_conj_out_arg, cmpx_conj_out_arg_sz, "detect_early_exit_task_recv");
 #endif
 			{
 				detect_early_exit_Wrapper2( cmpx_conj_out_arg, cmpx_conj_out_arg_sz, num_inputs);
@@ -1882,20 +1913,24 @@ __attribute__ ((noinline)) void compute(unsigned num_inputs, fx_pt * input_data_
 #endif
 
 #if defined(HPVM) 
-			void * T10 = __hetero_task_begin(5, sl_freq_offset, sl_freq_offset_sz,
+			void * T10 = __hetero_task_begin(6, sl_freq_offset, sl_freq_offset_sz,
 					num_sync_long_vals, num_sync_long_vals_sz, // ss_freq_offset, ss_freq_offset_sz, 
 					num_sync_short_vals, num_sync_short_vals_sz,
 					sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
-					3, sl_freq_offset, sl_freq_offset_sz, num_sync_long_vals, num_sync_long_vals_sz,
-					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz, "sync_long_task");
+					frame_d_arg, frame_d_arg_sz,
+					4, sl_freq_offset, sl_freq_offset_sz, num_sync_long_vals, num_sync_long_vals_sz,
+					d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz, 
+					frame_d_arg, frame_d_arg_sz,
+					"sync_long_task");
 #endif
 			{
 				 sync_long_Wrapper2(sl_freq_offset, sl_freq_offset_sz,
                                         num_sync_long_vals, num_sync_long_vals_sz, // ss_freq_offset, ss_freq_offset_sz,
                                         num_sync_short_vals, num_sync_short_vals_sz,
                                         sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
-                                        d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz);
+                                        d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
+					frame_d_arg, frame_d_arg_sz);
 			}
 
 #if defined(HPVM) 

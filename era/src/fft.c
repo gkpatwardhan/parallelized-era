@@ -87,8 +87,7 @@ uint64_t bitrev_sec  = 0LL;
 uint64_t bitrev_usec = 0LL;
 #endif
 
-static unsigned int
-_rev (unsigned int v)
+static unsigned int _rev (unsigned int v)
 {
   unsigned int r = v;
   int s = sizeof(v) * CHAR_BIT - 1;
@@ -237,32 +236,33 @@ fft(float * data, unsigned int N, unsigned int logn, int sign, int shift)
 void
 bit_reverse_ri (float * rw, float * iw, unsigned int N, unsigned int bits)
 {
-  unsigned int i, s, shift;
+  unsigned int i, s;
   s = sizeof(i) * CHAR_BIT - 1;
-  shift = s - bits + 1;
+ // shift = s - bits + 1;
+  unsigned int sShift = s - bits + 1;
 
   for (i = 0; i < N; i++) {
     unsigned int r;
     float t_real, t_imag;
-    r = _rev (i);
-    r >>= shift;
+    r = _rev (i); 
+//    r >>= shift;
+    r >>= sShift; 
 
-    if (i < r) {
+    if (i < r) { 
       t_real = rw[i];
       t_imag = iw[i];
       rw[i] = rw[r];
       iw[i] = iw[r];
       rw[r] = t_real;
       iw[r] = t_imag;
-    }
+    } 
   }
 }
 
 
 /* This version takes in an array of reals, and an array of imaginaries */
 int
-fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, unsigned int logn)
-{
+fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, unsigned int logn) {
   unsigned int transform_length;
   unsigned int a, b, i, j, bit;
   float theta, t_real, t_imag, w_real, w_imag, s, t, s2, z_real, z_imag;
@@ -274,7 +274,7 @@ fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, uns
 #ifdef INT_TIME
   gettimeofday(&bitrev_start, NULL);
 #endif
-  bit_reverse_ri(rdata, idata, N, logn);
+  bit_reverse_ri(rdata, idata, N, logn); 
 #ifdef INT_TIME
   gettimeofday(&bitrev_stop, NULL);
   bitrev_sec  += bitrev_stop.tv_sec  - bitrev_start.tv_sec;
@@ -303,20 +303,20 @@ fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, uns
 	t_real = w_real * z_real - w_imag * z_imag;
 	t_imag = w_real * z_imag + w_imag * z_real;
 
-	/* write the result */
+	// write the result 
 	rdata[j]  = rdata[i] - t_real;
 	idata[j]  = idata[i] - t_imag;
 	rdata[i] += t_real;
 	idata[i] += t_imag;
       }
 
-      /* adjust w */
+      // adjust w /
       t_real = w_real - (s * w_imag + s2 * w_real);
       t_imag = w_imag + (s * w_real - s2 * w_imag);
       w_real = t_real;
       w_imag = t_imag;
 
-    }
+    } 
 
     transform_length *= 2;
   }
@@ -324,7 +324,7 @@ fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, uns
   if (shift) {
     float swap_r, swap_i;
     int M = (N/2);
-    /* shift: */
+    // shift: /
     for(unsigned i = 0; i < M; i++) {
       swap_r = rdata[i];
       swap_i = idata[i];

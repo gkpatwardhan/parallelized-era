@@ -1,4 +1,5 @@
 #include <math.h>
+#include <limits.h>
 
 #if defined(HPVM)
 #include "hpvm.h"
@@ -6,9 +7,25 @@
 #endif
 
 #if false
-__attribute__ ((noinline)) void testFunction(float* array, size_t array_sz) {
+static unsigned int _rev (unsigned int v) {
+  unsigned int r = v;
+  int s = sizeof(v) * CHAR_BIT - 1;
+
+  for (v >>= 1; v; v >>= 1)
+  {
+    r <<= 1;
+    r |= v & 1;
+    s--;
+  }
+  r <<= s;
+
+  return r;
+}
+
+
+__attribute__ ((noinline)) void testFunction(float* array, size_t array_sz, float* array1, size_t array1_sz) {
 	void* Section = __hetero_section_begin();
-	void* T = __hetero_task_begin(1, array, array_sz, 1, array, array_sz);
+	void* T = __hetero_task_begin(2, array, array_sz, array1, array1_sz, 2, array, array_sz, array1, array1_sz);
 
 	__hpvm__hint(DEVICE);
 
@@ -20,19 +37,21 @@ __attribute__ ((noinline)) void testFunction(float* array, size_t array_sz) {
                                        26,29,32,35,38,41,44,47};
 
 	for(int ii = 0; ii < 48; ii++) {
-		array[ii] = (float)(interleaver_pattern[ii]);
+		int i = _rev(ii);
+		array[ii] = array1[i];
 	}
+
 
 
 	__hetero_task_end(T);
 	__hetero_section_end(Section);
 }
 
-__attribute__ ((noinline)) void testFunctionWrapper(float* array, size_t array_sz) {
+__attribute__ ((noinline)) void testFunctionWrapper(float* array, size_t array_sz, float* array1, size_t array1_sz) {
 	void* Section = __hetero_section_begin();
-	void* T = __hetero_task_begin(1, array, array_sz, 1, array, array_sz);
+	void* T = __hetero_task_begin(2, array, array_sz, array1, array1_sz, 2, array, array_sz, array1, array1_sz);
 
-	testFunction(array, array_sz);
+	testFunction(array, array_sz, array1, array1_sz);
 
 	__hetero_task_end(T);
 	__hetero_section_end(Section);
@@ -41,8 +60,11 @@ __attribute__ ((noinline)) void testFunctionWrapper(float* array, size_t array_s
 int main() {
 	float array[48];
 	size_t array_sz = 48*sizeof(float);
+	float array1[48];
+	size_t array1_sz = 48*sizeof(float);
 
-	void* DAG = __hetero_launch(testFunctionWrapper, 1, array, array_sz, 1, array, array_sz);
+	void* DAG = __hetero_launch(testFunctionWrapper, 2, array, array_sz, array1, array1_sz, 
+			2, array, array_sz, array1, array1_sz);
 	__hetero_wait(DAG);
 
 	return 0;
