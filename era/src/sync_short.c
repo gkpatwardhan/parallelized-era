@@ -39,8 +39,10 @@ void sync_short( unsigned num_inputs, fx_pt input_sample[SYNC_S_MAX_IN_SIZE], fx
  #ifdef INT_TIME
   gettimeofday(&sysh_total_start, NULL);
  #endif
+  bool quitLoop = false;
   for (unsigned i = 0; i < num_inputs /*SYNC_S_MAX_COR_SIZE*/; i++) {
     DEBUG2(printf("S_S_IN %5u : IN %12.8f %12.8f ABS %12.8f %12.8f CORR %12.8f : CP %u\n", i, crealf(input_sample[i]), cimagf(input_sample[i]), crealf(input_abs[i]), cimagf(input_abs[i]), correlation[i], c_plateau));
+    if (!quitLoop) {
     if ( correlation[i] > (fx_pt1)0.56 ) { // 0.56 == d_threshold == "sensitivity" parameter
       if (c_plateau < MIN_PLATEAU) {
 	c_plateau++;
@@ -53,10 +55,11 @@ void sync_short( unsigned num_inputs, fx_pt input_sample[SYNC_S_MAX_IN_SIZE], fx
 	*freq_offset_out = d_freq_offset;
 	frame_start = i;
 	frame=true;
-	break;
+	quitLoop = true;
       }
     } else {
       c_plateau = 0;
+    }
     }
   } //frame for every sample
   // } // end of if (frame)
