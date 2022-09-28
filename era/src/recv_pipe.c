@@ -46,6 +46,8 @@
 //
 //
 
+#define DEVICE CPU_TARGET
+
 //#undef HPVM // TODO: REMOVE ME
 //
 

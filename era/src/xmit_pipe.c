@@ -72,8 +72,10 @@ X. OUTPUT : <some number of complex numbers?>
 #include "hetero.h"
 #endif
 
+#define DEVICE CPU_TARGET
 
-#undef HPVM  // TODO: HPVM: REMOVE ME
+
+//#undef HPVM  // TODO: HPVM: REMOVE ME
 
 #ifdef INT_TIME
 /* This is XMIT PIPE internal Timing information (gathering resources) */

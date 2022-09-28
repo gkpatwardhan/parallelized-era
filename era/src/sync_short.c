@@ -76,8 +76,9 @@ void sync_short( unsigned num_inputs, fx_pt input_sample[SYNC_S_MAX_IN_SIZE], fx
 
     DEBUG(printf(" S_S : d_freq_offset = %12.8f\n", d_freq_offset));
     /* c_freq_corr: */
-    unsigned out_idx = 0;
-    for (unsigned k = frame_start; (k < num_inputs /*SYNC_S_MAX_ABS_SIZE*/) && (out_idx < MAX_SAMPLES); k++) {
+    unsigned limit = MAX_SAMPLES + frame_start > num_inputs ? num_inputs : MAX_SAMPLES + frame_start;
+    for (unsigned k = frame_start; k < limit; k++) {
+      unsigned out_idx = k - frame_start;
       fx_pt1_ext2 mult = -(fx_pt1_ext2)d_freq_offset * k; // pos_ext;
       
       fx_pt_ext esp = (fx_pt_ext)(cos((float)mult) + sin((float)mult) * I);
@@ -87,12 +88,11 @@ void sync_short( unsigned num_inputs, fx_pt input_sample[SYNC_S_MAX_IN_SIZE], fx
       DEBUG2(printf("  input: %12.8f %12.8f    prod : %12.8f %12.8f\n ", input_sample[k].real(), input_sample[k].imag(), prod.real(), prod.imag() ));
       output[out_idx] = (fx_pt)prod;
       DEBUG2(printf("  Set ss_output[%u] = %12.8f  %12.8f\n", out_idx, prod.real(), prod.imag()));
-      out_idx++;
       //pos++;
       //pos_ext++;
     } // end-for
 
-    *num_outputs = out_idx;
+    *num_outputs = limit - frame_start;
     DEBUG(printf(" synch_short set num_outputs to %u\n", *num_outputs));
     // if (out_idx >= MAX_SAMPLES) {
     //   frame = false;
@@ -100,7 +100,7 @@ void sync_short( unsigned num_inputs, fx_pt input_sample[SYNC_S_MAX_IN_SIZE], fx
     // }
   } else { // if (frame)
     //printf("ERROR: Couldn't find the start_Frame in sync_short... never crossed threshold?\n");
-    exit(-9);
+    //exit(-9);
   } // if (frame)
  #ifdef INT_TIME
   gettimeofday(&sysh_total_stop, NULL);

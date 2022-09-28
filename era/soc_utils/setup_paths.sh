@@ -3,7 +3,7 @@
 #export HPVM_DIR=$HOME/work_dir/hpvm-dssoc/hpvm
 #export RISCV_BIN_DIR=$HOME/work_dir/riscv/bin
 #export HPVM_DIR=$HOME/hpvm-release-copy/hpvm-debug/hpvm/hpvm
-export HPVM_DIR=$HOME/hpvm/hpvm/hpvm/
+export HPVM_DIR=$HOME/hpvm-meta/hpvm
 export RISCV_BIN_DIR= #$HOME/esp/esp/riscv/bin
 export ESP_ROOT= #$HOME/esp/esp
 
