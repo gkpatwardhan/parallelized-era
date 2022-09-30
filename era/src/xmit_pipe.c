@@ -72,9 +72,6 @@ X. OUTPUT : <some number of complex numbers?>
 #include "hetero.h"
 #endif
 
-#define DEVICE CPU_TARGET
-
-
 //#undef HPVM  // TODO: HPVM: REMOVE ME
 
 #ifdef INT_TIME
@@ -3710,7 +3707,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #if defined(PARALLEL_LOOP)
 			void* SectionLoop = __hetero_section_begin();
 #else
-		__hpvm__hint(FPGA_TARGET); 
+		__hpvm__hint(DEVICE); 
 
 #endif
 
@@ -3744,7 +3741,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						output_real, output_real_sz, output_imag, output_imag_sz,
 						ofc_res, ofc_res_sz,
 						2, output_real, output_real_sz, output_imag, output_imag_sz, "fft_ri_task");
-				__hpvm__hint(FPGA_TARGET);
+				__hpvm__hint(DEVICE);
 #endif
 				int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
 				int k = iteration * size;

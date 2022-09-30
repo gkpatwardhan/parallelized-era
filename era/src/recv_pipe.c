@@ -46,8 +46,6 @@
 //
 //
 
-#define DEVICE CPU_TARGET
-
 //#undef HPVM // TODO: REMOVE ME
 //
 
@@ -509,7 +507,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 						num_fft_outs_rcv_fft, num_fft_outs_rcv_fft_sz, 
 						d_sync_long_out_frames_arg, d_sync_long_out_frames_arg_sz,
 						"fft_ri_task_loop");
-			__hpvm__hint(FPGA_TARGET); 
+			__hpvm__hint(DEVICE); 
 #endif
 
 			unsigned num_fft_frames = ((*num_sync_long_vals) + 63) / 64;
@@ -1423,7 +1421,7 @@ __attribute__ ((noinline)) void sync_short_Wrapper(fx_pt * correlation_complex_a
 					3, sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
 					ss_freq_offset, ss_freq_offset_sz, num_sync_short_vals, num_sync_short_vals_sz,
 					"sync_short_task_body");
-			__hpvm__hint(FPGA_TARGET); // TODO: HPVM: Put me on fpga
+			__hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga
 #endif
 			{
 				unsigned num_mavg64_vals = num_inputs; // copied from previous task (as prior tasks doesn't change the value of this)
