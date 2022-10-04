@@ -64,6 +64,7 @@ X. OUTPUT : <some number of complex numbers?>
 #include "xmit_pipe.h"
 #include "fft.h"
 #include "globalsXmitPipe.h"
+#include "crc.h"
 
 #include <unistd.h>
 
@@ -229,9 +230,12 @@ void convolutional_encoding(const char * in, char * out, int n_data_bits) { //fr
 
 void interleave(const char * in, char * out, int in_sym, /*frame_param* frame,*/ int in_cbps, int in_bpsc, /*ofdm_param* ofdm,*/ bool reverse) {
 
+	// n_cbps <= 860
+//	printf("ERA: Interleave array allocation size is: %d\n", in_cbps);
 	int n_cbps = /*ofdm.*/ in_cbps;
-	int first[n_cbps];
-	int second[n_cbps];
+	//int first[n_cbps]; int second[n_cbps]; // HPVM: original code
+	int first[860];
+	int second[860];
 	int s = (( /*ofdm.*/ in_bpsc / 2) > 1) ? ( /*ofdm.*/ in_bpsc / 2) : 1;
 
 	for (int j = 0; j < n_cbps; j++) {
@@ -334,8 +338,10 @@ init_ofdm_parms(ofdm_param * ofdm, int enc) {
  * This routine does general data assembly and a CRC32 computation
  * This is almost entirely data movement/copy except for the CRC!
  ********************************************************************************/
+// msdu_size <= 2544
+// *psdu_size <= 2544 + 28
 void generate_mac_data_frame(const char * msdu, int msdu_size, int * psdu_size, uint8_t * d_psdu, size_t d_psdu_size, 
-		uint16_t * d_seq_nr, size_t d_seq_nr_sz) {
+		uint16_t * d_seq_nr, size_t d_seq_nr_sz, crc* crcTable, size_t crcTable_sz) {
 	//printf("ERA: In generate_mac_data_frame\n");
 	//printf("d_psdu: %p\n", d_psdu);
 	// mac header
@@ -406,7 +412,7 @@ void generate_mac_data_frame(const char * msdu, int msdu_size, int * psdu_size, 
 	 memcpy(d_psdu + msdu_size + 24, &fcs, sizeof(uint32_t));
 	 ****/
 	DEBUG(printf("Doing fcs computation using %s\n", CRC_NAME));
-	uint32_t fcs = crcFast(d_psdu, msdu_size + 24);
+	uint32_t fcs = crcFast(d_psdu, msdu_size + 24, crcTable);
 	DEBUG(printf("FCS = 0x%08x\n", fcs));
 	d_psdu[msdu_size + 24] = (fcs & 0x000000ff);
 	d_psdu[msdu_size + 25] = (fcs & 0x0000ff00) >> 8;
@@ -472,9 +478,9 @@ int do_mapper_work(int psdu_length, uint8_t * d_psdu, size_t d_psdu_size, uint8_
 	gettimeofday(&xdmw_total_start, NULL);
 #endif
 	/* frame_param frame(d_ofdm, psdu_length); */
-	d_frame->psdu_size = psdu_length;
+	d_frame->psdu_size = psdu_length; // psdu_length <= 2572
 	// number of symbols (17-11)
-	d_frame->n_sym = (int) ceil((16 + 8 * d_frame->psdu_size + 6) / (double) d_ofdm->n_dbps);
+	d_frame->n_sym = (int) ceil((16 + 8 * d_frame->psdu_size + 6) / (double) d_ofdm->n_dbps); // n_sym <= (16 + (8*2572)+6)/24 = 860
 	d_frame->n_data_bits = d_frame->n_sym * d_ofdm->n_dbps;
 	// number of padding bits (17-13)
 	d_frame->n_pad = d_frame->n_data_bits - (16 + 8 * d_frame->psdu_size + 6);
@@ -674,6 +680,7 @@ xdmw_punct_usec += xdmw_punct_stop.tv_usec - xdmw_cnvEnc_stop.tv_usec;
 //std::cout << "punctured" << std::endl;
 // interleaving
 //     interleave(punctured_data, interleaved_data, frame, d_ofdm);
+// printf("ERA: psdu_size: %d\n", d_frame->psdu_size);
 interleave(punctured_data, interleaved_data, d_frame->n_sym, d_ofdm->n_cbps, d_ofdm->n_bpsc, false);
 /* //std::cout << "interleaved" << std::endl; */
 DEBUG({
@@ -721,7 +728,8 @@ xdmw_intlv_usec += xdmw_intlv_stop.tv_usec - xdmw_punct_stop.tv_usec;
 //printf("d_symbols_len = %u * 48 = %u\n", d_frame->n_sym, *d_symbols_len);
 
 //printf("Assigning d_symbols\n");
-for (int di = 0; di < *d_symbols_len; di++) {
+int termination = *d_symbols_len;
+for (int di = 0; di < termination; di++) {
 	//printf("symbols[%d] = %d\n", di, symbols[di]);
 	//printf("d_symbols[%d] = %d\n", di, d_symbols[di]);
 	d_symbols[di] = symbols[di];
@@ -3343,8 +3351,8 @@ const float d_sync_words_real[d_num_sync_words][d_size_sync_words] = {
 			int psidx = i % d_num_pilot_symbols;
 			//int oidx = o_offset + i * d_fft_len + d_pilot_carriers[i % d_num_pilot_carriers][k];
 			int oidx = o_offset + i * d_fft_len + d_pilot_carriers[(pcidx * d_num_pilot_carriers) + k];
-			out_real[oidx] = d_pilot_symbols_real[psidx][k];
-			out_imag[oidx] = d_pilot_symbols_imag[psidx][k];
+			out_real[oidx] = 0; //d_pilot_symbols_real[psidx][k];
+			out_imag[oidx] = 0; //d_pilot_symbols_imag[psidx][k];
 		}
 	}
 	//printf("\nReturning %lu (symbols + sync_words)\n", n_ofdm_symbols + d_num_sync_words);
@@ -3487,9 +3495,9 @@ void free_XMIT_FFT_HW_RESOURCES() {
 #endif // XMIT_HW_FFT
 
   void
-  xmit_pipe_init() {
+  xmit_pipe_init(crc* crcTable) {
   int d_scrambler = 1;
-  crcInit();
+  crcInit(crcTable);
   init_ofdm_parms(&d_ofdm_org, BPSK_1_2);
 
   init_ofdm_carrier_allocator();
@@ -3896,17 +3904,21 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 					__attribute__ ((noinline)) void mac_data_Wrapper(int * in_msg_len, size_t in_msg_len_sz, char * in_msg, size_t in_msg_sz,
 							int * psdu_len /*local*/, size_t psdu_len_sz /*=1*/,
 							uint8_t * d_psdu, size_t d_psdu_size,
-							uint16_t * d_seq_nr, size_t d_seq_nr_sz/*=sizeof(uint16_t)*/) { 
+							uint16_t * d_seq_nr, size_t d_seq_nr_sz/*=sizeof(uint16_t)*/,
+							crc* crcTable, size_t crcTable_sz) { 
 #if defined(HPVM)
 						void* Section = __hetero_section_begin();
-						void * T1 = __hetero_task_begin(5, in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz,
+						void * T1 = __hetero_task_begin(6, in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz,
 								d_psdu, d_psdu_size,
 								d_seq_nr, d_seq_nr_sz,
-								3, psdu_len, psdu_len_sz, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz, "mac_data_task");
-						 __hpvm__hint(CPU_TARGET); // TODO: HPVM: This function must run on cpu for now as it uses a global variable in crc.c file which is stored 
-						// only on cpu
+								crcTable, crcTable_sz,
+								4, psdu_len, psdu_len_sz, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz, 
+								crcTable, crcTable_sz,
+								"mac_data_task");
+						 __hpvm__hint(DEVICE);
 #endif
 
+						/*
 						printf("ERA: In mac_data_wrapper\n");
 						DO_NUM_IOS_ANALYSIS(printf("In do_xmit_pipeline: MSG_LEN %u\n", *in_msg_len));
 						DEBUG(printf("  MSG:");
@@ -3915,17 +3927,20 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								}
 								printf("\n"); fflush(stdout));
 						printf("ERA: Assigning psdu_len (%p)\n", psdu_len);
-						* psdu_len = 0;
 	          printf("Before call to generate_mac_data_frameL d_psdu: %p\n", d_psdu);
 						// do_wifi_mac(*in_msg_len, in_msg, &psdu_len);
 						printf("ERA: Calling generate_mac_data_frame using address d_psdu (%p) and d_seq_nr (%p)\n", d_psdu, d_seq_nr);
-						generate_mac_data_frame(in_msg, *in_msg_len, psdu_len, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz);
+						*/
+
+						* psdu_len = 0;
+						generate_mac_data_frame(in_msg, *in_msg_len, psdu_len, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz, 
+														crcTable, crcTable_sz);
 #ifdef INT_TIME
 						gettimeofday(&x_genmacfr_stop, NULL);
 						x_genmacfr_sec += x_genmacfr_stop.tv_sec - x_genmacfr_start.tv_sec;
 						x_genmacfr_usec += x_genmacfr_stop.tv_usec - x_genmacfr_start.tv_usec;
 #endif
-						printf("Done with generate_mac_data_frame\n");
+						//printf("Done with generate_mac_data_frame\n");
 
 #if defined(HPVM)
 						__hetero_task_end(T1);
@@ -3962,7 +3977,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_ofdm, d_ofdm_sz,
 								d_frame, d_frame_sz,
 								d_psdu, d_psdu_size, d_map_out, d_map_out_sz, "mapper_task");
-						 __hpvm__hint(CPU_TARGET); // TODO: HPVM: Can't put this on the fpga as llvm doesn't support smax operation on llvm and this operation is required by the task
+						 __hpvm__hint(DEVICE); 
 #endif
 #ifdef INT_TIME
 						gettimeofday(&x_domapwk_start, NULL);
@@ -4054,8 +4069,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_ofdm, d_ofdm_sz,
 								d_frame, d_frame_sz,
 								"chuck_strm_task");
-							 __hpvm__hint(CPU_TARGET);  // TODO: HPVM: This task can't be run on fpga. Getting error: WARNING: this target does not support the llvm.stacksave intrinsic.
-					// Couldn't find induction Variable in loop!
+							 __hpvm__hint(DEVICE);
 
 #endif
 
@@ -4074,7 +4088,13 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						  -1.0,
 						  1.0
 						  };*/
-						for (int i = 0; i < (*pckt_hdr_len); i++) {
+						// This is to clear any left-over storage locations...
+						for (int i = 0; i < MAX_SIZE; i++) {
+							msg_stream_real[i] = 0.0;
+							msg_stream_imag[i] = 0.0;
+						}
+						int terminationCondition = (*pckt_hdr_len);
+						for (int i = 0; i < terminationCondition; i++) {
 							msg_stream_real[msg_idx] = bpsk_chunks2sym(pckt_hdr_out[i]);
 							msg_stream_imag[msg_idx] = 0.0;
 							msg_idx++;
@@ -4087,12 +4107,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 							msg_idx++;
 						}
 						//  printf("\n");
-						// This is to clear any left-over storage locations...
-						for (int i = msg_idx; i < MAX_SIZE; i++) {
-							msg_stream_real[i] = 0.0;
-							msg_stream_imag[i] = 0.0;
-						}
-						printf("Done with chuck_strm\n");
+						//printf("Done with chuck_strm\n");
 
 #if defined(INT_TIME) && !defined(HPVM)
 						gettimeofday(&x_ck2sym_stop, NULL);
@@ -4137,22 +4152,23 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #endif
 
 						// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));
-						DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n",
-									d_frame->n_sym, d_frame->n_encoded_bits));
+						//DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n",
+						//			d_frame->n_sym, d_frame->n_encoded_bits));
 
 						// float ofdm_car_str_real[ofdm_max_out_size];
 						// float ofdm_car_str_imag[ofdm_max_out_size];
 
-						DO_NUM_IOS_ANALYSIS(printf("Calling do_ofdm_carrier_alloc: IN n_sym %u n_enc_bits %u\n", d_frame->n_sym,
-									d_frame->n_encoded_bits));
+						//DO_NUM_IOS_ANALYSIS(printf("Calling do_ofdm_carrier_alloc: IN n_sym %u n_enc_bits %u\n", d_frame->n_sym,
+						//			d_frame->n_encoded_bits));
 						// int ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(520, 24576, msg_stream_real, msg_stream_imag, ofdm_car_str_real, ofdm_car_str_imag);
 #ifdef INT_TIME
-						gettimeofday(&x_ocaralloc_start, NULL);
+	//					gettimeofday(&x_ocaralloc_start, NULL);
 #endif
 						*ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(d_frame->n_sym, d_frame->n_encoded_bits, 
 											 msg_stream_real, msg_stream_imag, 	ofdm_car_str_real, ofdm_car_str_imag, 
 											 d_pilot_carriers, d_pilot_carriers_sz, d_occupied_carriers, d_occupied_carriers_sz); 
 
+						/*
 						DO_NUM_IOS_ANALYSIS(printf("Back from do_ofdm_carrier_alloc: OUT ofc_res %u : %u max outputs (of %u)\n", 
 														ofc_res, ofc_res * d_fft_len, ofdm_max_out_size));
 						DEBUG(printf(" return value was %u so max %u outputs\n", *ofc_res, (*ofc_res) * d_fft_len); 
@@ -4161,6 +4177,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								printf("  ofdm_car %6u : %9.6f + %9.6f i\n", ti, ofdm_car_str_real[ti], ofdm_car_str_imag[ti]);
 								});
 						printf("Done with carrier_alloc\n");
+						*/
 
 #ifdef INT_TIME
 						gettimeofday(&x_ocaralloc_stop, NULL);
@@ -4318,7 +4335,8 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 							int* d_symbols_len, size_t d_symbols_len_sz,
 							ofdm_param * d_ofdm, size_t d_ofdm_sz,
 							frame_param * d_frame, size_t d_frame_sz,
-							int* d_pilot_carriers, size_t d_pilot_carriers_sz
+							int* d_pilot_carriers, size_t d_pilot_carriers_sz,
+							crc* crcTable, size_t crcTable_sz
 								// End of local variables used by do_xmit_pipeline
 								) {
 
@@ -4329,16 +4347,18 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 
 #if defined(HPVM)
 									void * Section = __hetero_section_begin();
-									void * T1 = __hetero_task_begin(5, in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz,
+									void * T1 = __hetero_task_begin(6, in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz,
 											d_psdu, d_psdu_size, 
 											d_seq_nr, d_seq_nr_sz,
-											3, psdu_len, psdu_len_sz,  d_psdu, d_psdu_size, 
+											crcTable, crcTable_sz,
+											4, psdu_len, psdu_len_sz,  d_psdu, d_psdu_size, 
 											d_seq_nr, d_seq_nr_sz,
+											crcTable, crcTable_sz,
 											"mac_data_task_wrapper");
 #endif
 
 									mac_data_Wrapper(in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz, d_psdu, d_psdu_size,
-											d_seq_nr, d_seq_nr_sz);
+											d_seq_nr, d_seq_nr_sz, crcTable, crcTable_sz);
 
 
 #if defined(HPVM)

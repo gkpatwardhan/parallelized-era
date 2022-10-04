@@ -32,9 +32,9 @@ typedef uint32_t crc;
 #define CHECK_VALUE		0xCBF43926
 
 
-void  crcInit(void);
+void  crcInit(crc* crcTable);
 crc   crcSlow(unsigned char const message[], int nBytes);
-crc   crcFast(unsigned char const message[], int nBytes);
+crc   crcFast(unsigned char const message[], int nBytes, crc* crcTable);
 
 
 #endif /* _crc_h */

@@ -20,6 +20,7 @@
 #define _XMIT_PIPE_H
 
 #include "sdr_base.h"
+#include "crc.h"
 
 #ifdef INT_TIME
 /* This is XMIT PIPE internal Timing information (gathering resources) */
@@ -120,7 +121,8 @@ void do_xmit_pipeline(int* in_msg_len, size_t in_msg_len_sz,  char * in_msg, siz
         int* d_symbols_len, size_t d_symbols_len_sz,
 	ofdm_param * d_ofdm, size_t d_ofdm_sz,
         frame_param * d_frame, size_t d_frame_sz,
-	int* d_pilot_carriers, size_t d_pilot_carriers_sz
+	int* d_pilot_carriers, size_t d_pilot_carriers_sz,
+	crc* crcTable, size_t crcTable_sz
         // End of local variables used by do_xmit_pipeline
          );
 //#else
@@ -129,7 +131,7 @@ void do_xmit_pipeline(int* in_msg_len, size_t in_msg_len_sz,  char * in_msg, siz
 //#endif
 
 
-void generate_mac_data_frame(const char *msdu, int msdu_size, /*char **psdu,*/ int *psdu_size /*, char seq*/, uint8_t * d_psdu, size_t d_psdu_size, uint16_t * d_seq_nr, size_t d_seq_nr_sz);
+void generate_mac_data_frame(const char *msdu, int msdu_size, /*char **psdu,*/ int *psdu_size /*, char seq*/, uint8_t * d_psdu, size_t d_psdu_size, uint16_t * d_seq_nr, size_t d_seq_nr_sz, crc* crcTable, size_t crcTable_sz);
 
 void scramble(const char *input, char *out, frame_param *frame, char initial_state);
 

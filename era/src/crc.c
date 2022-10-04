@@ -136,7 +136,7 @@ crcSlow(unsigned char const message[], int nBytes)
 }   /* crcSlow() */
 
 
-crc  crcTable[256];
+//crc  crcTableGlobal[256];
 
 
 /*********************************************************************
@@ -153,7 +153,7 @@ crc  crcTable[256];
  *
  *********************************************************************/
 void
-crcInit(void)
+crcInit(crc* crcTable)
 {
   crc			   remainder;
   int			   dividend;
@@ -209,7 +209,7 @@ crcInit(void)
  *
  *********************************************************************/
 crc
-crcFast(unsigned char const message[], int nBytes)
+crcFast(unsigned char const message[], int nBytes, crc* crcTable)
 {
   crc	           remainder = INITIAL_REMAINDER;
   unsigned char  data;

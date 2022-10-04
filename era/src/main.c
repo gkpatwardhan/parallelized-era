@@ -31,6 +31,7 @@
 #include "globalsXmitPipe.h"
 #include "globalsOccgrid.h"
 #include "globalsSDRViterbi.h"
+#include "crc.h"
 
 #include <stdint.h>
 #define STB_IMAGE_IMPLEMENTATION
@@ -107,6 +108,9 @@ size_t d_frame_org_sz = sizeof(frame_param);
 
 size_t d_pilot_carriers_org_sz = d_num_pilot_carriers*d_size_pilot_carriers_val*sizeof(int);
 size_t d_occupied_carriers_org_sz = d_num_occupied_carriers*d_size_occupied_carriers*sizeof(int);
+
+crc  crcTable[256];
+size_t crcTable_sz = 256*sizeof(crc);
 
 // The PORTS are defined in the compilation process, and comforms to the
 // definition in the read_bag_x.py files and wifi_comm_x.py files.
@@ -1844,7 +1848,8 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
         int* d_symbols_len, size_t d_symbols_len_sz,
 	ofdm_param * d_ofdm, size_t d_ofdm_sz,
         frame_param * d_frame, size_t d_frame_sz,
-	int* d_pilot_carriers, size_t d_pilot_carriers_sz
+	int* d_pilot_carriers, size_t d_pilot_carriers_sz,
+	crc* crcTable, size_t crcTable_sz
 	// End of arguments to encode_occgrid (called indirectly by lidar_root)
 ) {
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
@@ -1881,7 +1886,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 #endif
 
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
-	void * T2 = __hetero_task_begin(28,
+	void * T2 = __hetero_task_begin(29,
 		// Args for encode_occgrid
 		n_cmp_bytes, n_cmp_bytes_sz,
 		cmp_data, cmp_data_sz,
@@ -1912,8 +1917,9 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 		d_ofdm, d_ofdm_sz,
 		d_frame, d_frame_sz,
 		d_pilot_carriers, d_pilot_carriers_sz,
+		crcTable, crcTable_sz,
 		// End of local variables for do_xmit_pipeline
-		13, n_xmit_out, n_xmit_out_sz,
+		14, n_xmit_out, n_xmit_out_sz,
 		xmit_out_real, xmit_out_real_sz,
 		xmit_out_imag, xmit_out_imag_sz,
 		d_psdu_arg, d_psdu_arg_sz,
@@ -1926,6 +1932,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 		d_ofdm, d_ofdm_sz,
 		d_frame, d_frame_sz,
 		d_pilot_carriers, d_pilot_carriers_sz,
+		crcTable, crcTable_sz,
 		"TX_task");
 //	__hpvm__hint(DEVICE);
 #endif
@@ -1953,7 +1960,8 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 		d_symbols_len, d_symbols_len_sz,
 		d_ofdm, d_ofdm_sz,
 		d_frame, d_frame_sz,
-		d_pilot_carriers, d_pilot_carriers_sz
+		d_pilot_carriers, d_pilot_carriers_sz,
+		crcTable, crcTable_sz
 	);
 
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
@@ -2061,7 +2069,7 @@ int main(int argc, char * argv[]) {
 	printf("Initializing the OccGrid state...\n");
 	init_occgrid_state(); // Initialize the occgrid functions, state, etc.
 	printf("Initializing the Transmit pipeline...\n");
-	xmit_pipe_init(); // Initialize the IEEE SDR Transmit Pipeline
+	xmit_pipe_init(crcTable); // Initialize the IEEE SDR Transmit Pipeline
 	printf("Initializing the Receive pipeline...\n");
 	recv_pipe_init(fir_input, firc_input);
 	printf("Initializing the Computer Vision toolset...\n");
@@ -2379,7 +2387,7 @@ int main(int argc, char * argv[]) {
 			printf("%s %d Calling lidar_root", __FILE__, __LINE__);
 
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
-			void * lidarDAG = __hetero_launch((void *) lidar_root, 43, &lidar_inputs, sizeof(lidar_inputs_t),
+			void * lidarDAG = __hetero_launch((void *) lidar_root, 44, &lidar_inputs, sizeof(lidar_inputs_t),
 				&observationsArr[next_obs], sizeof(Observation),
 				&n_cmp_bytes, sizeof(int),
 				cmp_data, MAX_COMPRESSED_DATA_SIZE,
@@ -2427,8 +2435,9 @@ int main(int argc, char * argv[]) {
 				&d_ofdm_org, d_ofdm_org_sz,
                          	&d_frame_org, d_frame_org_sz,
 				d_pilot_carriers_org, d_pilot_carriers_org_sz,
+				crcTable, crcTable_sz,
 				// Outputs
-				16, &n_cmp_bytes, sizeof(int),
+				17, &n_cmp_bytes, sizeof(int),
 				cmp_data, MAX_COMPRESSED_DATA_SIZE,
 				&observationsArr[next_obs], sizeof(Observation),
 				&d_psdu_org, d_psdu_org_size,
@@ -2443,7 +2452,8 @@ int main(int argc, char * argv[]) {
 				d_pilot_carriers_org, d_pilot_carriers_org_sz,
 				&n_xmit_out, n_xmit_out_sz,
 				xmit_out_real, xmit_out_real_sz,
-				xmit_out_imag, xmit_out_imag_sz
+				xmit_out_imag, xmit_out_imag_sz,
+				crcTable, crcTable_sz
 			);
 			__hetero_wait(lidarDAG);
 #else
