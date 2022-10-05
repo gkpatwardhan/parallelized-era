@@ -116,11 +116,11 @@ const int interleaver_pattern[48] = {  0 , 3, 6, 9,12,15,18,21,
   uint8_t decoded_bits[48]; 
   int n_bits;
   DEBUG(printf("DSF: Calling decode...\n"));
-  printf("DSF: Calling sdr_decode from gr_equalizer\n");
+  DEBUG(printf("DSF: Calling sdr_decode from gr_equalizer\n"));
   sdr_decode(&ofdm, &frame, d_deinterleaved, &n_bits, decoded_bits);
   DEBUG(printf("\nDSF: Back from decode\n");
 	for (int i = 0; i < 48; i++) {
-	  printf("DSF: decoded_bits[%u] = %u\n", i, decoded_bits[i]);
+	  DEBUG(printf("DSF: decoded_bits[%u] = %u\n", i, decoded_bits[i]));
 	});
 
 
@@ -230,7 +230,7 @@ const int interleaver_pattern[48] = {  0 , 3, 6, 9,12,15,18,21,
     ret_val = false;
     break;
   default:
-    printf("unknown encoding\n");
+    DEBUG(printf("unknown encoding\n"));
     //return false;
     ret_val = false;
   }
@@ -246,7 +246,6 @@ const int interleaver_pattern[48] = {  0 , 3, 6, 9,12,15,18,21,
   return ret_val;
 }
 
-fx_pt d_H[64];
 
 //void do_LS_equalize(fx_pt in[64], unsigned n, fx_pt symbols[48], fx_pt* output)  // BPSK , d_frame_mod)
 static inline void do_LS_equalize(fx_pt *in, int n, fx_pt *symbols, uint8_t *bits) // BPSK , boost::shared_ptr<gr::digital::constellation> mod) {
@@ -258,6 +257,7 @@ const fx_pt LONG_ref[] = { 0 ,  0,  0,  0,  0,  0,  1,  1, -1, -1,
 			   -1,  1, -1, -1, -1, -1, -1,  1,  1, -1,
 			   -1,  1, -1,  1, -1,  1,  1,  1,  1,  0,
 			   0 ,  0,  0,  0 };
+fx_pt d_H[64]; // Used to be global, move to local purely for compile - needs testing to make sure this doesn't break anything
 
   if(n == 0) {
     for (int ii = 0; ii < 64; ii++) {
@@ -267,21 +267,18 @@ const fx_pt LONG_ref[] = { 0 ,  0,  0,  0,  0,  0,  1,  1, -1, -1,
     double signal = 0;
     double noise = 0;
     for(int i = 0; i < 64; i++) {
-      if((i == 32) || (i < 6) || ( i > 58)) {
-	continue;
+      if(!((i == 32) || (i < 6) || ( i > 58))) {
+        noise += pow(cabs(d_H[i] - in[i]), 2);
+        signal += pow(cabs(d_H[i] + in[i]), 2);
+        d_H[i] += in[i];
+        d_H[i] /= LONG_ref[i] * (fx_pt)(2 + 0 * I);
       }
-      noise += pow(cabs(d_H[i] - in[i]), 2);
-      signal += pow(cabs(d_H[i] + in[i]), 2);
-      d_H[i] += in[i];
-      d_H[i] /= LONG_ref[i] * (fx_pt)(2 + 0 * I);
     }
     double d_snr = 10 * log10(signal / noise / 2);
   } else {
     int c = 0;
     for(int ii = 0; ii < 64; ii++) {
-      if( (ii == 11) || (ii == 25) || (ii == 32) || (ii == 39) || (ii == 53) || (ii < 6) || ( ii > 58)) {
-	continue;
-      } else {
+      if(!((ii == 11) || (ii == 25) || (ii == 32) || (ii == 39) || (ii == 53) || (ii < 6) || ( ii > 58))) {
 	symbols[c] = in[ii] / d_H[ii];
 	//printf("do_LS_eq : symbols[%u] = in[%u] / d_H[%u] = %12.8f %12.8f / %12.8f %12.8f = %12.8f %12.8f \n", c, ii, ii, crealf(in[ii]), cimagf(in[ii]), crealf(d_H[ii]), cimagf(d_H[ii]), crealf(symbols[c]), cimagf(symbols[c])); 
 	// decision_maker is from constellation for BPSK
@@ -403,8 +400,8 @@ void gr_equalize(float wifi_start, unsigned num_inputs, fx_pt inputs[FRAME_EQ_IN
       // decode this frame, and do some checking, etc... in the decode_signal_field (above)
       DEBUG(printf("Calling decode_signal_field with out_sym = %u and d_current_symbol = %u\n", out_sym, d_current_symbol));
       if (!decode_signal_field(&(outputs[out_sym * 48]), msg_psdu)) {
-        printf("ERROR : Bad decode_signal_field return value ...\n");
-	exit(-20); // return false;
+        DEBUG(printf("ERROR : Bad decode_signal_field return value ...\n"));
+	//exit(-20); // return false;
       }
       DEBUG(printf("Back from decode_signal_field...\n"));
     }

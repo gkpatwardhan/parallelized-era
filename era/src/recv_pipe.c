@@ -357,7 +357,8 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 	void* T1 = __hetero_task_begin(1, num_sync_long_vals, num_sync_long_vals_sz, 
 			1, num_sync_long_vals, num_sync_long_vals_sz, 
 			"detect_early_exit_task_rcv_fft");
-	__hpvm__hint(CPU_TARGET); // TODO: HPVM: Putting this task on the fpga produces error : llvm-ocl: /home/gaurip2/hpvm/hpvm/hpvm/llvm/tools/hpvm/projects/llvm-ocl/lib/Target/CBackend/CBackend.cpp:4368: void llvm::CWriter::visitBranchInst(llvm::BranchInst&): Assertion `ImmPostDomm && "Nearest common denominator must exist!"' failed. (logs in folder-NearestCommonDenominatorError
+	//__hpvm__hint(CPU_TARGET); // TODO: HPVM: Putting this task on the fpga produces error : llvm-ocl: /home/gaurip2/hpvm/hpvm/hpvm/llvm/tools/hpvm/projects/llvm-ocl/lib/Target/CBackend/CBackend.cpp:4368: void llvm::CWriter::visitBranchInst(llvm::BranchInst&): Assertion `ImmPostDomm && "Nearest common denominator must exist!"' failed. (logs in folder-NearestCommonDenominatorError
+	__hpvm__hint(DEVICE);
 
 #endif
 	DEBUG(printf("\nSetting up for FFT...\n"));
@@ -367,7 +368,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 	unsigned num_fft_frames = ((*num_sync_long_vals) + 63) / 64;
 	if (num_fft_frames > MAX_FFT_FRAMES) {
 		//printf("ERROR : FFT generated %u frames which exceeds current MAX_FFT_FRAMES %u\n", num_fft_frames, MAX_FFT_FRAMES);
-		exit(-7);
+		//exit(-7);
 	}
 #if defined(HPVM) 
 	__hetero_task_end(T1);
@@ -485,6 +486,7 @@ __attribute__ ((noinline)) void do_rcv_fft_work(fx_pt1* fft_ar_r, size_t fft_ar_
 			"fft_ri_for_loop_wrappertask");
 #if !defined(PARALLEL_LOOP)
 			__hpvm__hint(CPU_TARGET);  // TODO: Put me on the fpga
+			//__hpvm__hint(DEVICE);  // TODO: Put me on the fpga
 #endif
 #if defined(PARALLEL_LOOP)
 	void* Section_Loop = __hetero_section_begin();
@@ -936,6 +938,7 @@ __attribute__ ((noinline)) void logging_Wrapper(unsigned num_inputs, fx_pt * inp
 			void* T = __hetero_task_begin(2, num_inputs, input_data_arg, input_data_arg_sz,
 					1, input_data_arg, input_data_arg_sz, "logging_task_body");
 			__hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga
+			//__hpvm__hint(DEVICE); // TODO: HPVM: Put me on fpga
 #endif
 				// uint8_t scrambled_msg[MAX_ENCODED_BITS * 3 / 4];
 				DEBUG(for (int ti = 0; ti < num_inputs /*RAW_DATA_IN_MAX_SIZE*/; ti++) {
@@ -1413,15 +1416,22 @@ __attribute__ ((noinline)) void sync_short_Wrapper(fx_pt * correlation_complex_a
 		unsigned num_inputs) {
 #if defined(HPVM) 
 	void* Section = __hetero_section_begin();
-			void* T = __hetero_task_begin(7, correlation_complex_arg, correlation_complex_arg_sz,
+			void* T = __hetero_task_begin(7, 
+					correlation_complex_arg, correlation_complex_arg_sz,
 					sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
-					the_correlation_arg, the_correlation_arg_sz, ss_freq_offset, ss_freq_offset_sz,
+					the_correlation_arg, the_correlation_arg_sz, 
+					ss_freq_offset, ss_freq_offset_sz,
 					num_sync_short_vals, num_sync_short_vals_sz,
-					delay16_out_arg, delay16_out_arg_sz, num_inputs,
-					3, sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
-					ss_freq_offset, ss_freq_offset_sz, num_sync_short_vals, num_sync_short_vals_sz,
+					delay16_out_arg, delay16_out_arg_sz,
+					num_inputs,
+					3, 
+					sync_short_out_frames_arg, sync_short_out_frames_arg_sz,
+					ss_freq_offset, ss_freq_offset_sz, 
+					num_sync_short_vals, num_sync_short_vals_sz,
 					"sync_short_task_body");
 			__hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga
+			//__hpvm__hint(DEVICE); // TODO: HPVM: Put me on fpga
+
 #endif
 			{
 				unsigned num_mavg64_vals = num_inputs; // copied from previous task (as prior tasks doesn't change the value of this)
@@ -1596,6 +1606,7 @@ __attribute__ ((noinline)) void gr_equalize_Wrapper(fx_pt1 * fft_ar_r/*local*/, 
 					4, toBeEqualized, toBeEqualized_sz, equalized, equalized_sz,
 					num_eq_out_bits, num_eq_out_bits_sz, psdu, psdu_sz, "gr_equalize_task_body");
 			 __hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga
+			 //__hpvm__hint(DEVICE); // TODO: HPVM: Put me on fpga
 #endif
 
 			// equalize
