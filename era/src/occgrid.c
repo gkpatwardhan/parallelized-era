@@ -847,7 +847,6 @@ gettimeofday(&ocgr_ryFS_total_start, NULL);
 
 		// now that the vector is scaled correctly... we'll get the map coordinates of its endpoint
 		int x1, y1;
-		// if (!worldToMapCell(obs_ptr, wx, wy, robot_x, robot_y, &x1, &y1)) continue; // HPVM: Original code
 		if (worldToMapCell(obs_ptr, wx, wy, robot_x, robot_y, &x1, &y1)) {
 
 			unsigned int cell_raytrace_range = cellDistance(obs_ptr, obs_ptr->raytrace_range);
@@ -870,6 +869,7 @@ ocgr_ryFS_rtLine_usec += ocgr_ryFS_rtLine_stop.tv_usec - ocgr_ryFS_rtLine_start.
 		/* No apparent effect
 		   updateRaytraceBounds(ox, oy, wx, wy, obs_ptr->raytrace_range, min_x, min_y, max_x, max_y);
 		   */
+		}
 		}
 		/** No need to do this here -- provides no more info than exterior measure, really
 #ifdef INT_TIME
