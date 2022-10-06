@@ -80,15 +80,15 @@ typedef struct MapLocation {
 } MapLocation;
 
 typedef struct Costmap2D_struct {
-  double   av_x;
-  double   av_y;
-  double   av_z;
+  double   av_x; // 8
+  double   av_y; 
+  double   av_z; // 24
   //double   av_w;
-  double   cell_size;
-  unsigned int x_dim;
-  unsigned int y_dim;
-  unsigned char default_value;
-  unsigned char costmap[COST_MAP_ENTRIES];
+  double   cell_size; // 32
+  unsigned int x_dim; // 36
+  unsigned int y_dim; // 40
+  unsigned char default_value; // 41
+  unsigned char costmap[COST_MAP_ENTRIES]; // 41+2500 // 2541 ~ 2544 bytes
 } Costmap2D;
 
 typedef struct Observation {
