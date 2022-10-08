@@ -1281,7 +1281,8 @@ __attribute__ ((noinline)) void process_lidar_to_occgrid(lidar_inputs_t * lidar_
 			timer_sequentialize, timer_sequentialize_sz,
 			2, observationVal, observations_sz, timer_sequentialize, timer_sequentialize_sz,
 			"initCostmap_task");
-	__hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga; running into issue with memset
+	//__hpvm__hint(CPU_TARGET); // TODO: HPVM: Put me on fpga; running into issue with memset
+	__hpvm__hint(DEVICE); // TODO: HPVM: Put me on fpga; running into issue with memset
 #endif
 		{
 			*timer_sequentialize = 1;

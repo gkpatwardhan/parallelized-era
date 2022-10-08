@@ -877,7 +877,6 @@ gettimeofday(&ocgr_ryFS_total_stop, NULL);
 ocgr_ryFS_total_sec  += ocgr_ryFS_total_stop.tv_sec  - ocgr_ryFS_total_start.tv_sec;
 ocgr_ryFS_total_usec += ocgr_ryFS_total_stop.tv_usec - ocgr_ryFS_total_start.tv_usec;
 #endif  **/
-		}
 
 
 		static inline void bresenham2D(Observation* obs_ptr, unsigned int abs_da, unsigned int abs_db, int error_b,

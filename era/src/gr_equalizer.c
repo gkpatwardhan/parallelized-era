@@ -246,6 +246,7 @@ const int interleaver_pattern[48] = {  0 , 3, 6, 9,12,15,18,21,
   return ret_val;
 }
 
+fx_pt d_H[64];
 
 //void do_LS_equalize(fx_pt in[64], unsigned n, fx_pt symbols[48], fx_pt* output)  // BPSK , d_frame_mod)
 static inline void do_LS_equalize(fx_pt *in, int n, fx_pt *symbols, uint8_t *bits) // BPSK , boost::shared_ptr<gr::digital::constellation> mod) {
@@ -257,7 +258,6 @@ const fx_pt LONG_ref[] = { 0 ,  0,  0,  0,  0,  0,  1,  1, -1, -1,
 			   -1,  1, -1, -1, -1, -1, -1,  1,  1, -1,
 			   -1,  1, -1,  1, -1,  1,  1,  1,  1,  0,
 			   0 ,  0,  0,  0 };
-fx_pt d_H[64]; // Used to be global, move to local purely for compile - needs testing to make sure this doesn't break anything
 
   if(n == 0) {
     for (int ii = 0; ii < 64; ii++) {
