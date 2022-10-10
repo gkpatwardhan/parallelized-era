@@ -4149,8 +4149,8 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_frame, d_frame_sz,
 								d_pilot_carriers, d_pilot_carriers_sz,
 								ofc_res, ofc_res_sz, "carrier_alloc_task");
-						__hpvm__hint(CPU_TARGET); 
-						//__hpvm__hint(DEVICE); 
+						//__hpvm__hint(CPU_TARGET); 
+						__hpvm__hint(DEVICE); 
 #endif
 
 						// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));
