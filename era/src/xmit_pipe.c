@@ -73,6 +73,7 @@ X. OUTPUT : <some number of complex numbers?>
 #include "hetero.h"
 #endif
 
+#define COLLAPSE_NODES
 //#undef HPVM  // TODO: HPVM: REMOVE ME
 
 #ifdef INT_TIME
@@ -3901,6 +3902,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #define ofdm_max_out_size 33280 // 520*64  // 33024   // Not sure why, though
 
 
+#if !defined(COLLAPSE_NODES)
 					__attribute__ ((noinline)) void mac_data_Wrapper(int * in_msg_len, size_t in_msg_len_sz, char * in_msg, size_t in_msg_sz,
 							int * psdu_len /*local*/, size_t psdu_len_sz /*=1*/,
 							uint8_t * d_psdu, size_t d_psdu_size,
@@ -3947,7 +3949,9 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						__hetero_section_end(Section);
 #endif
 					}
+#endif
 
+#if !defined(COLLAPSE_NODES)
 					__attribute__ ((noinline)) void mapper_Wrapper(uint8_t * pckt_hdr_out, size_t pckt_hdr_out_sz /*=64 -> though 48 may work*/, 
 							int * psdu_len /*local*/, size_t psdu_len_sz /*=1*/, 
 							int * pckt_hdr_len /*local*/, size_t pckt_hdr_len_sz /*=1*/,
@@ -4004,7 +4008,9 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						__hetero_section_end(Section);
 #endif
 					}
+#endif
 
+#if !defined(COLLAPSE_NODES)
 					__attribute__ ((noinline)) void packer_hdr_Wrapper(uint8_t * pckt_hdr_out, size_t pckt_hdr_out_sz /*=64 -> though 48 may work*/, 
 							int * pckt_hdr_len /*local*/, size_t pckt_hdr_len_sz /*=1*/,
 							ofdm_param * d_ofdm, size_t d_ofdm_sz,
@@ -4020,7 +4026,6 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 								d_frame, d_frame_sz,
 								"packer_hdr_task");
 						__hpvm__hint(CPU_TARGET); // TODO: HPVM: This task isn't running on fpga correctly for some reason; ERA crashes when this task is placed on fpga
-						//__hpvm__hint(DEVICE); // TODO: HPVM: This task isn't running on fpga correctly for some reason; ERA crashes when this task is placed on fpga
 #endif
 
 #if defined(INT_TIME) && !defined(HPVM)
@@ -4050,6 +4055,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 						__hetero_section_end(Section);
 #endif
 					}
+#endif
 
 					__attribute__ ((noinline)) void chuck_strm_Wrapper(uint8_t * pckt_hdr_out, size_t pckt_hdr_out_sz /*=64 -> though 48 may work*/, 
 							int * pckt_hdr_len /*local*/, size_t pckt_hdr_len_sz /*=1*/, 
@@ -4359,8 +4365,20 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 											"mac_data_task_wrapper");
 #endif
 
+#if defined(COLLAPSE_NODES)
+									            * psdu_len = 0;
+            generate_mac_data_frame(in_msg, *in_msg_len, psdu_len, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz,
+                            crcTable, crcTable_sz);
+#ifdef INT_TIME
+            gettimeofday(&x_genmacfr_stop, NULL);
+            x_genmacfr_sec += x_genmacfr_stop.tv_sec - x_genmacfr_start.tv_sec;
+            x_genmacfr_usec += x_genmacfr_stop.tv_usec - x_genmacfr_start.tv_usec;
+#endif
+            //printf("Done with generate_mac_data_frame\n");
+#else
 									mac_data_Wrapper(in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz, d_psdu, d_psdu_size,
 											d_seq_nr, d_seq_nr_sz, crcTable, crcTable_sz);
+#endif
 
 
 #if defined(HPVM)
@@ -4385,6 +4403,29 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 											d_frame, d_frame_sz,
 											d_psdu, d_psdu_size, d_map_out, d_map_out_sz, "mapper_task_wrapper");
 #endif
+
+#if defined(COLLAPSE_NODES)
+#ifdef INT_TIME
+            gettimeofday(&x_domapwk_start, NULL);
+#endif
+
+            // do_mapper_work(32768, psdu_len); // noutput always seems to be 32768 ? Actualy data size is 24528 ?
+            do_mapper_work(*psdu_len, d_psdu, d_psdu_size, d_map_out, d_map_out_sz,
+                d_scrambler, d_scrambler_sz,
+                d_symbols, d_symbols_sz,
+                d_symbols_offset, d_symbols_offset_sz,
+                d_symbols_len, d_symbols_len_sz,
+                d_ofdm, d_ofdm_sz,
+                d_frame, d_frame_sz
+                    ); // noutput always seems to be 32768 ? Actualy data size is 24528 ?
+            // The mapper results in 24528 output bytes for a 1500 character input payload
+#ifdef INT_TIME
+            gettimeofday(&x_domapwk_stop, NULL);
+            x_domapwk_sec += x_domapwk_stop.tv_sec - x_domapwk_start.tv_sec;
+            x_domapwk_usec += x_domapwk_stop.tv_usec - x_domapwk_start.tv_usec;
+#endif
+            //printf("Done with do_mapper_work\n");
+#else
 									mapper_Wrapper(pckt_hdr_out, pckt_hdr_out_sz, psdu_len, psdu_len_sz, pckt_hdr_len, pckt_hdr_len_sz, 
 											d_scrambler, d_scrambler_sz,
 											d_symbols, d_symbols_sz,
@@ -4394,6 +4435,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 											d_map_out, d_map_out_sz,
 											d_ofdm, d_ofdm_sz,
 											d_frame, d_frame_sz);
+#endif
 
 #if defined(HPVM)
 									__hetero_task_end(T2);
@@ -4408,31 +4450,33 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 											d_frame, d_frame_sz,
 											"packer_hdr_task_wrapper");
 #endif
+#if defined(COLLAPSE_NODES)
+#if defined(INT_TIME) && !defined(HPVM)
+            gettimeofday(&x_phdrgen_start, NULL);
+#endif
+
+            int mapper_payload_size = d_frame->n_encoded_bits;
+            // uint8_t pckt_hdr_out[64]; // I think this only needs to be 48 bytes...
+            *pckt_hdr_len = do_packet_header_gen(mapper_payload_size, pckt_hdr_out, d_ofdm, d_ofdm_sz, d_frame, d_frame_sz);
+
+#if defined(INT_TIME) && !defined(HPVM)
+            gettimeofday(&x_phdrgen_stop, NULL);
+            x_phdrgen_sec += x_phdrgen_stop.tv_sec - x_phdrgen_start.tv_sec;
+            x_phdrgen_usec += x_phdrgen_stop.tv_usec - x_phdrgen_start.tv_usec;
+#endif
+	
+            DO_NUM_IOS_ANALYSIS(printf("Called do_packet_header_gen: IN payload_size %u OUT packet_hdr_len %u\n",
+                  mapper_payload_size, *pckt_hdr_len));
+            DEBUG(printf("packet_header = ");
+                for (int i = 0; i < *pckt_hdr_len; i++) {
+                printf("%1x ", pckt_hdr_out[i]);
+                }
+                printf("\n"));
+            //printf("Done with do_packet_header_gen\n");
+#else
 									packer_hdr_Wrapper(pckt_hdr_out, pckt_hdr_out_sz, pckt_hdr_len, pckt_hdr_len_sz,
 											d_ofdm, d_ofdm_sz, d_frame, d_frame_sz);
-
-#if false
-
-#ifdef INT_TIME
-									gettimeofday(&x_phdrgen_start, NULL);
 #endif
-
-									int mapper_payload_size = d_frame->n_encoded_bits;
-									// uint8_t pckt_hdr_out[64]; // I think this only needs to be 48 bytes...
-									*pckt_hdr_len = do_packet_header_gen(mapper_payload_size, pckt_hdr_out);
-#ifdef INT_TIME
-									gettimeofday(&x_phdrgen_stop, NULL);
-									x_phdrgen_sec += x_phdrgen_stop.tv_sec - x_phdrgen_start.tv_sec;
-									x_phdrgen_usec += x_phdrgen_stop.tv_usec - x_phdrgen_start.tv_usec;
-#endif
-									DO_NUM_IOS_ANALYSIS(printf("Called do_packet_header_gen: IN payload_size %u OUT packet_hdr_len %u\n",
-												mapper_payload_size, *pckt_hdr_len));
-									DEBUG(printf("packet_header = ");
-											for (int i = 0; i < *pckt_hdr_len; i++) {
-											printf("%1x ", pckt_hdr_out[i]);
-											}
-											printf("\n"));
-#endif // if false
 
 #if defined(HPVM)
 									__hetero_task_end(T3);
