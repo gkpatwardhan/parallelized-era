@@ -4366,6 +4366,9 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #endif
 
 #if defined(COLLAPSE_NODES)
+#if defined(HPVM)
+						__hpvm__hint(DEVICE);
+#endif
 									            * psdu_len = 0;
             generate_mac_data_frame(in_msg, *in_msg_len, psdu_len, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz,
                             crcTable, crcTable_sz);
@@ -4405,6 +4408,9 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #endif
 
 #if defined(COLLAPSE_NODES)
+#if defined(HPVM)
+						__hpvm__hint(DEVICE);
+#endif
 #ifdef INT_TIME
             gettimeofday(&x_domapwk_start, NULL);
 #endif
@@ -4451,6 +4457,9 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 											"packer_hdr_task_wrapper");
 #endif
 #if defined(COLLAPSE_NODES)
+#if defined(HPVM)
+						__hpvm__hint(DEVICE);
+#endif
 #if defined(INT_TIME) && !defined(HPVM)
             gettimeofday(&x_phdrgen_start, NULL);
 #endif
