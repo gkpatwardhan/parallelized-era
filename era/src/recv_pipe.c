@@ -46,7 +46,7 @@
 //
 //
 
-//#undef HPVM // TODO: REMOVE ME
+#undef HPVM // TODO: REMOVE ME
 //
 
 #if defined(HPVM)
