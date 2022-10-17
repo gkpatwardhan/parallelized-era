@@ -2895,7 +2895,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 	__hetero_task_end(T1);
 #endif
 #else
-	void *T_Sacrificial = __hetero_task_begin(
+	void *T_CPU_Wrapper = __hetero_task_begin(
 		43,
 		lidar_inputs, lidarin_sz,
 		n_cmp_bytes, n_cmp_bytes_sz,
@@ -2958,8 +2958,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 		d_frame, d_frame_sz,
 		d_pilot_carriers, d_pilot_carriers_sz,
 		crcTable, crcTable_sz, 
-		"sacrificial_cpu_task");
-	__hpvm__hint(CPU_TARGET);
+		"wrapper_cpu_task");
 	void * Section_Main = __hetero_section_begin();
 
 	// CloudToOccgrid
@@ -4035,7 +4034,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
 	__hetero_section_end(Section_Main);
-	__hetero_task_end(T_Sacrificial);
+	__hetero_task_end(T_CPU_Wrapper);
 	__hetero_section_end(Section);
 #endif
 }
