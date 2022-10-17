@@ -900,7 +900,7 @@ int get_bit(int b, int i) { // Is this really an efficient way to do this?
 void generate_signal_field(char * out,
 		ofdm_param * d_ofdm, size_t d_ofdm_sz,
 		frame_param * d_frame, size_t d_frame_sz
-		) { // , frame_param &frame, ofdm_param &ofdm) {
+		) {
 	//data bits of the signal header
 	//char *signal_header = (char *) malloc(sizeof(char) * 24);
 	char signal_header[24];
@@ -3399,29 +3399,22 @@ do_ofdm_cyclic_prefixer_impl_work(int n_symbols, const float * in_real, const fl
 			out_real[out_offset + i] = in_real[in_offset + i + d_fft_len - d_cp_size];
 			out_imag[out_offset + i] = in_imag[in_offset + i + d_fft_len - d_cp_size];
 		}
-		//if (d_rolloff_len) { // always true in this case
 		for (int i = 0; i < d_rolloff_len - 1; i++) {
 			out_real[out_offset + i] = out_real[out_offset + i] * d_up_flank[i] + d_delay_line_real[i];
 			out_imag[out_offset + i] = out_imag[out_offset + i] * d_up_flank[i] + d_delay_line_imag[i];
 			d_delay_line_real[i] = in_real[in_offset + i] * d_down_flank[i];
 			d_delay_line_imag[i] = in_imag[in_offset + i] * d_down_flank[i];
 		}
-		//}
 		in_offset += d_fft_len;
 		out_offset += d_output_size;
 	}
 
 	// 3) If we're in packet mode: (we are)
 	//    - flush the delay line, if applicable
-	//if (!d_length_tag_key_str.empty()) { // TRUE
-	// if (d_rolloff_len) { // TRUE
 	for (unsigned i = 0; i < (d_rolloff_len - 1); i++) {
 		out_real[out_offset + i] = d_delay_line_real[i];
 		out_imag[out_offset + i] = d_delay_line_imag[i];
 	}
-	//d_delay_line.assign(d_delay_line.size(), 0);
-	//}
-
 }
 
 /********************************************************************************
@@ -4325,6 +4318,8 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 					}
 #endif
 
+// Inlined in main.c
+#if !defined(COLLAPSE_NODES)
 					__attribute__ ((noinline)) void do_xmit_pipeline(int * in_msg_len, size_t in_msg_len_sz, char * in_msg, size_t in_msg_sz,
 							int * num_final_outs, size_t num_final_outs_sz,
 							float * final_out_real, size_t final_out_real_sz,
@@ -5241,3 +5236,4 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #endif
 
 								}
+#endif

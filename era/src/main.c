@@ -17,7 +17,7 @@
 #define HPVM_PROCESS_LIDAR_INTERNAL
 //#define HPVM_RECV_PIPELINE
 //#define RECV_CALLER
-//#define COLLAPSE_NODES
+#define COLLAPSE_NODES
 
 #include "globals.h"
 #include "debug.h"
@@ -65,6 +65,20 @@ char * IMAGE_FN = "gridimage_era2_";
 #define RECV_PORT 5561
 #define CAR_PORT 5563
 #endif
+
+#define d_fft_len 64
+#define d_fft_logn 6
+#define d_rolloff_len 2
+#define d_cp_size 16
+#define d_num_sync_words 4
+#define d_size_sync_words 128
+#define d_num_pilot_carriers 1
+#define d_size_pilot_carriers_val 4
+#define d_num_pilot_symbols 127
+#define d_size_pilot_symbols 4
+static const int d_size_pilot_carriers[d_num_pilot_carriers] = {
+	d_size_pilot_carriers_val
+};
 
 uint8_t d_psdu_org[MAX_PSDU_SIZE];
 uint8_t d_map_out_copy_org[32768];
@@ -1519,6 +1533,1147 @@ void transmit_occgrid(
 	printf("Leaving transmit_occgrid\n");
 }
 
+
+// Functions pasted from xmit_pipe.c for collapsing of do_xmit_pipeline
+static int do_mapper_work(int psdu_length, uint8_t * d_psdu, size_t d_psdu_size, uint8_t * d_map_out, size_t d_map_out_sz,
+		uint8_t * d_scrambler, size_t d_scrambler_sz,
+		char* d_symbols, size_t d_symbols_sz,
+		int* d_symbols_offset, size_t d_symbols_offset_sz,
+		int* d_symbols_len, size_t d_symbols_len_sz,
+		ofdm_param * d_ofdm, size_t d_ofdm_sz,
+		frame_param * d_frame, size_t d_frame_sz
+		) 
+	// int noutput, gr_vector_int& ninput_items, gr_vector_const_void_star& input_items, gr_vector_void_star& output_items )
+{
+	char data_bits[12264]; // = (char*)calloc(frame.n_data_bits, sizeof(char));
+	char interleaved_data[24528]; // = (char*)calloc(frame.n_encoded_bits, sizeof(char));
+	char symbols[24528]; // = (char*)calloc((frame.n_encoded_bits / d_ofdm->n_bpsc), sizeof(char)); ## n_bpsc == 1 ##
+	char scrambled_data[12264]; // = (char*)calloc(frame.n_data_bits, sizeof(char));
+	char encoded_data[12264 * 2]; // = (char*)calloc(frame.n_data_bits * 2, sizeof(char));
+	char * punctured_data = encoded_data; // TRUE for BPSK_1_2, QPSK_1_2, and QAM16_1_2
+#ifdef INT_TIME
+	gettimeofday(&xdmw_total_start, NULL);
+#endif
+	/* frame_param frame(d_ofdm, psdu_length); */
+	d_frame->psdu_size = psdu_length; // psdu_length <= 2572
+	// number of symbols (17-11)
+	d_frame->n_sym = (int) ceil((16 + 8 * d_frame->psdu_size + 6) / (double) d_ofdm->n_dbps); // n_sym <= (16 + (8*2572)+6)/24 = 860
+	d_frame->n_data_bits = d_frame->n_sym * d_ofdm->n_dbps;
+	// number of padding bits (17-13)
+	d_frame->n_pad = d_frame->n_data_bits - (16 + 8 * d_frame->psdu_size + 6);
+	d_frame->n_encoded_bits = d_frame->n_sym * d_ofdm->n_cbps;
+
+
+	//generate the WIFI data field, adding service field and pad bits
+	//     generate_bits(psdu, data_bits, frame);
+	//     void generate_bits(const char *psdu, char *data_bits, frame_param &frame)
+#ifdef INT_TIME
+	gettimeofday(&xdmw_genDF_start, NULL);
+#endif 
+	{
+		// first 16 bits are zero (SERVICE/DATA field)
+		//memset(data_bits, 0, 16);
+		//data_bits += 16;
+		for (int i = 0; i < 16; i++) {
+			data_bits[i] = 0;
+		}
+		for (int i = 0; i < d_frame->psdu_size; i++) {
+			for (int b = 0; b < 8; b++) {
+				data_bits[16 + i * 8 + b] = !!(d_psdu[i] & (1 << b));
+			}
+		}
+	}
+	DEBUG({
+			int di_row = 0;
+			int symbols_len = d_frame->n_data_bits;
+			printf("\ndata_bits out:\n%6u : ", di_row);
+			for (int di = 0; di < symbols_len; di++) {
+			printf("%1x", data_bits[di]);
+			if ((di % 128) == 127) {
+			di_row++;
+			printf("\n%6u : ", di_row);
+			}
+			else if ((di % 8) == 7) {
+			printf(" ");
+			}
+			}
+			printf("\n\n");
+			});
+#ifdef INT_TIME
+	gettimeofday(&xdmw_genDF_stop, NULL);
+	xdmw_genDF_sec += xdmw_genDF_stop.tv_sec - xdmw_genDF_start.tv_sec;
+	xdmw_genDF_usec += xdmw_genDF_stop.tv_usec - xdmw_genDF_start.tv_usec;
+#endif
+
+	// scrambling
+	//     scramble(     data_bits, scrambled_data,              frame,      d_scrambler++);
+	//     void scramble(const char *in, char *out,      frame_param &frame, char initial_state)
+	{
+		int state = (*d_scrambler)++; // initial_state;
+		int feedback;
+
+		for (int i = 0; i < d_frame->n_data_bits; i++) {
+			feedback = (!!(state & 64)) ^ (!!(state & 8));
+			scrambled_data[i] = feedback ^ data_bits[i];
+			DEBUG(printf("  %u : state %u   feedback %u   data %u   scrambled %u\n", i, state, feedback, data_bits[i], scrambled_data[i]));
+			state = ((state << 1) & 0x7e) | feedback;
+		}
+	}
+
+	if (*d_scrambler > 127) {
+		*d_scrambler = 1;
+	}
+
+	// reset tail bits
+	//     reset_tail_bits(scrambled_data, frame);
+	//     void reset_tail_bits(char *scrambled_data, frame_param &frame)
+	{
+		//memset(scrambled_data + d_frame->n_data_bits - d_frame->n_pad - 6, 0, 6 * sizeof(char));
+		for (int i = 0; i < 6; i++) {
+			scrambled_data[d_frame->n_data_bits - d_frame->n_pad - 6 + i] = 0;
+		}
+	}
+	DEBUG({
+			int di_row = 0;
+			int symbols_len = d_frame->n_data_bits;
+			printf("\nscrambled out:\n%6u : ", di_row);
+			for (int di = 0; di < symbols_len; di++) {
+			printf("%1x", scrambled_data[di]);
+			if ((di % 128) == 127) {
+			di_row++;
+			printf("\n%6u : ", di_row);
+			}
+			else if ((di % 8) == 7) {
+			printf(" ");
+			}
+			}
+			printf("\n\n");
+			});
+#ifdef INT_TIME
+	gettimeofday(&xdmw_scrmbl_stop, NULL);
+	xdmw_scrmbl_sec += xdmw_scrmbl_stop.tv_sec - xdmw_genDF_stop.tv_sec;
+	xdmw_scrmbl_usec += xdmw_scrmbl_stop.tv_usec - xdmw_genDF_stop.tv_usec;
+#endif
+
+	// encoding
+	//     convolutional_encoding(scrambled_data, encoded_data, frame);
+	//     void convolutional_encoding(const char *in, char *out, frame_param &frame)
+	convolutional_encoding(scrambled_data, encoded_data, d_frame->n_data_bits);
+	/* { */
+	/*      int state = 0; */
+	/*      for(int i = 0; i < d_frame->n_data_bits; i++) { */
+	/*        assert(scrambled_data[i] == 0 || scrambled_data[i] == 1); */
+	/*        state = ((state << 1) & 0x7e) | scrambled_data[i]; */
+	/*        encoded_data[i * 2]     = ones_count(state & 0155) % 2; */
+	/*        encoded_data[i * 2 + 1] = ones_count(state & 0117) % 2; */
+	/*      } */
+	/* } */
+	DEBUG({
+			int di_row = 0;
+			int symbols_len = d_frame->n_data_bits;
+			printf("\nencoded out:\n%6u : ", di_row);
+			for (int di = 0; di < symbols_len; di++) {
+			printf("%1x", encoded_data[di]);
+			if ((di % 128) == 127) {
+			di_row++;
+			printf("\n%6u : ", di_row);
+			}
+			else if ((di % 8) == 7) {
+			printf(" ");
+			}
+			}
+			printf("\n\n");
+			});
+#ifdef INT_TIME
+	gettimeofday(&xdmw_cnvEnc_stop, NULL);
+	xdmw_cnvEnc_sec += xdmw_cnvEnc_stop.tv_sec - xdmw_scrmbl_stop.tv_sec;
+	xdmw_cnvEnc_usec += xdmw_cnvEnc_stop.tv_usec - xdmw_scrmbl_stop.tv_usec;
+#endif
+
+	// puncturing
+	//puncturing(encoded_data, punctured_data, frame, d_ofdm);
+	/**## TODO: I think we are only using BPSK_1_2 for now -- can hard-code that to avoid the SWITCH ##**/
+	/**   NOTE: If we use BPSK_1_2 then this just COPIES the data UNCHANGED -- so it is really a NOP **
+	//void puncturing(const char *in, char *out , frame_param *frame, ofdm_param *ofdm)
+	{
+	int mod;
+	int oidx = 0;
+	for (int i = 0; i < d_frame->n_data_bits * 2; i++) {
+	switch(d_ofdm->encoding) {
+	case BPSK_1_2:
+	case QPSK_1_2:
+	case QAM16_1_2:
+	punctured_data[oidx] = encoded_data[i];
+	oidx++;
+	break;
+
+	case QAM64_2_3:
+	if (i % 4 != 3) {
+	punctured_data[oidx] = encoded_data[i];
+	oidx++;
+	}
+	break;
+
+	case BPSK_3_4:
+	case QPSK_3_4:
+	case QAM16_3_4:
+	case QAM64_3_4:
+	mod = i % 6;
+	if (!(mod == 3 || mod == 4)) {
+	punctured_data[oidx] = encoded_data[i];
+	oidx++;
+	}
+	break;
+defaut:
+assert(false);
+break;
+}
+}
+}**/
+	// EFFECTIVELY: punctured_data = encoded_data
+	DEBUG({
+			int di_row = 0;
+			int symbols_len = d_frame->n_data_bits;
+			printf("\npunctured out:\n%6u : ", di_row);
+			for (int di = 0; di < symbols_len; di++) {
+			printf("%1x", punctured_data[di]);
+			if ((di % 128) == 127) {
+			di_row++;
+			printf("\n%6u : ", di_row);
+			}
+			else if ((di % 8) == 7) {
+			printf(" ");
+			}
+			}
+			printf("\n\n");
+			});
+#ifdef INT_TIME
+gettimeofday(&xdmw_punct_stop, NULL);
+xdmw_punct_sec += xdmw_punct_stop.tv_sec - xdmw_cnvEnc_stop.tv_sec;
+xdmw_punct_usec += xdmw_punct_stop.tv_usec - xdmw_cnvEnc_stop.tv_usec;
+#endif
+
+	//printf("Calling interleave\n");
+//std::cout << "punctured" << std::endl;
+// interleaving
+//     interleave(punctured_data, interleaved_data, frame, d_ofdm);
+// printf("ERA: psdu_size: %d\n", d_frame->psdu_size);
+interleave(punctured_data, interleaved_data, d_frame->n_sym, d_ofdm->n_cbps, d_ofdm->n_bpsc, false);
+/* //std::cout << "interleaved" << std::endl; */
+DEBUG({
+		int di_row = 0;
+		int symbols_len = d_frame->n_sym * 48; // 24528
+		printf("\ninterleaved out:\n%6u : ", di_row);
+		for (int di = 0; di < symbols_len; di++) {
+		printf("%1x", interleaved_data[di]);
+		if ((di % 128) == 127) {
+		di_row++;
+		printf("\n%6u : ", di_row);
+		}
+		else if ((di % 8) == 7) {
+		printf(" ");
+		}
+		}
+		printf("\n\n");
+		});
+#ifdef INT_TIME
+gettimeofday(&xdmw_intlv_stop, NULL);
+xdmw_intlv_sec += xdmw_intlv_stop.tv_sec - xdmw_punct_stop.tv_sec;
+xdmw_intlv_usec += xdmw_intlv_stop.tv_usec - xdmw_punct_stop.tv_usec;
+#endif
+
+// one byte per symbol
+//     split_symbols(interleaved_data, symbols, frame, d_ofdm);
+//     void split_symbols(const char *in, char *out, frame_param &frame, ofdm_param &ofdm)
+// printf("On line 704 in xmit_pipe.c\n");
+{
+	int n_symbols = d_frame->n_sym * 48;
+	int idx = 0;
+	for (int i = 0; i < n_symbols; i++) {
+		symbols[i] = 0;
+		for (int k = 0; k < d_ofdm->n_bpsc; k++) {
+			// assert(interleaved_data[idx] == 1 || interleaved_data[idx] == 0); // HPVM: can't have asserts on fpga
+			symbols[i] |= (interleaved_data[idx] << k);
+			idx++;
+		}
+	}
+}
+
+//printf("Assigning d_symbols_len\n");
+*d_symbols_len = d_frame->n_sym * 48; // 24528
+//printf("Done assigning d_symbols_len\n");
+//printf("d_symbols_len = %u * 48 = %u\n", d_frame->n_sym, *d_symbols_len);
+
+//printf("Assigning d_symbols\n");
+int termination = *d_symbols_len;
+for (int di = 0; di < termination; di++) {
+	//printf("symbols[%d] = %d\n", di, symbols[di]);
+	//printf("d_symbols[%d] = %d\n", di, d_symbols[di]);
+	d_symbols[di] = symbols[di];
+}
+//printf("Done assigning d_symbols\n");
+//printf("d_symbols_len = %u * 48 = %u\n", d_frame->n_sym, d_symbols_len); fflush(stdout);
+DEBUG({
+		int di_row = 0;
+		printf("\nd_symbols out:\n%6u : ", di_row);
+		for (int di = 0; di < *d_symbols_len; di++) {
+		printf("%1x", d_symbols[di]);
+		if ((di % 128) == 127) {
+		di_row++;
+		printf("\n%6u : ", di_row);
+		}
+		else if ((di % 8) == 7) {
+		printf(" ");
+		}
+		}
+		printf("\n\n");
+		});
+#ifdef INT_TIME
+gettimeofday(&xdmw_symbls_stop, NULL);
+xdmw_symbls_sec += xdmw_symbls_stop.tv_sec - xdmw_intlv_stop.tv_sec;
+xdmw_symbls_usec += xdmw_symbls_stop.tv_usec - xdmw_intlv_stop.tv_usec;
+#endif
+
+int i = *d_symbols_len - *d_symbols_offset;
+//printf("output i = %u :  d_sym = %p and d_sym_off = %u\n", i, (void *) d_symbols, *d_symbols_offset);
+for (int di = 0; di < i; di++) {
+	d_map_out[di] = d_symbols[*d_symbols_offset + di];
+	DEBUG(
+			if (di < 16) {
+			printf("%2u : d_map_out[%2u] = %1x : d_symbols[%2u] = %1x\n", i, di, d_map_out[di], (*d_symbols_offset + di), d_symbols[*d_symbols_offset + di]);
+			});
+}
+//printf("Updating the value of d_symbols_offset\n");
+//printf(" Done with do_mapper_work %d\n", 5*(*d_symbols_len));
+*d_symbols_offset += i;
+
+if (*d_symbols_offset == *d_symbols_len) {
+	*d_symbols_offset = 0;
+	DEBUG(printf("reset d_symbols_offset to 0\n"));
+}
+//printf("finished updating the value of d_symbols_offset\n");
+
+DEBUG({
+		int di_row = 0;
+		printf("\nMapper out:\n%6u : ", di_row);
+		for (int di = 0; di < d_frame->n_encoded_bits /*noutput*/; di++) {
+		printf("%1x", d_map_out[di]);
+		if ((di % 128) == 127) {
+		di_row++;
+		printf("\n%6u : ", di_row);
+		}
+		else if ((di % 8) == 7) {
+		printf(" ");
+		}
+		}
+		printf("\n");
+		fflush(stdout);
+		});
+#ifdef INT_TIME
+gettimeofday(&xdmw_mapout_stop, NULL);
+//gettimeofday(&xdmw_stop, NULL);
+xdmw_mapout_sec += xdmw_mapout_stop.tv_sec - xdmw_symbls_stop.tv_sec;
+xdmw_mapout_usec += xdmw_mapout_stop.tv_usec - xdmw_symbls_stop.tv_usec;
+xdmw_total_sec += xdmw_mapout_stop.tv_sec - xdmw_total_start.tv_sec;
+xdmw_total_usec += xdmw_mapout_stop.tv_usec - xdmw_total_start.tv_usec;
+#endif
+return i;
+}
+
+static int get_bit(int b, int i) { // Is this really an efficient way to do this?
+	return (b & (1 << i) ? 1 : 0); // This is one shift, one and, one compare, and a branch.
+	//return ((b >> i) & 0x1); // Isn't this a better way?  One shift, one and
+}
+
+static void generate_signal_field(char * out,
+		ofdm_param * d_ofdm, size_t d_ofdm_sz,
+		frame_param * d_frame, size_t d_frame_sz
+		) {
+	//data bits of the signal header
+	//char *signal_header = (char *) malloc(sizeof(char) * 24);
+	char signal_header[24];
+	//signal header after...
+	//convolutional encoding
+	//char *encoded_signal_header = (char *) malloc(sizeof(char) * 48);
+	char encoded_signal_header[48];
+	//interleaving
+	//char *interleaved_signal_header = (char *) malloc(sizeof(char) * 48);
+	//char interleaved_signal_header[48]; -- this writes into "out"
+
+	int length = d_frame->psdu_size;
+
+	// first 4 bits represent the modulation and coding scheme
+	signal_header[0] = get_bit(d_ofdm->rate_field, 3);
+	signal_header[1] = get_bit(d_ofdm->rate_field, 2);
+	signal_header[2] = get_bit(d_ofdm->rate_field, 1);
+	signal_header[3] = get_bit(d_ofdm->rate_field, 0);
+	// 5th bit is reserved and must be set to 0
+	signal_header[4] = 0;
+	// then 12 bits represent the length
+	signal_header[5] = get_bit(length, 0);
+	signal_header[6] = get_bit(length, 1);
+	signal_header[7] = get_bit(length, 2);
+	signal_header[8] = get_bit(length, 3);
+	signal_header[9] = get_bit(length, 4);
+	signal_header[10] = get_bit(length, 5);
+	signal_header[11] = get_bit(length, 6);
+	signal_header[12] = get_bit(length, 7);
+	signal_header[13] = get_bit(length, 8);
+	signal_header[14] = get_bit(length, 9);
+	signal_header[15] = get_bit(length, 10);
+	signal_header[16] = get_bit(length, 11);
+	//18-th bit is the parity bit for the first 17 bits
+	int sum = 0;
+	for (int i = 0; i < 17; i++) {
+		if (signal_header[i]) {
+			sum++;
+		}
+	}
+	signal_header[17] = sum % 2;
+
+	DEBUG(unsigned hdr_psdu = 0x0; printf("ENC LENGTH PSDU      ");
+			for (int i = 16; i >= 5; i--) {
+			printf("%01x", signal_header[i]);
+			hdr_psdu = (hdr_psdu << 1) | signal_header[i];
+			}
+			printf("  = %03x vs 0x%03x = %u vs %u\n", hdr_psdu, length, hdr_psdu, length));
+
+	// last 6 bits must be set to 0
+	for (int i = 0; i < 6; i++) {
+		signal_header[18 + i] = 0;
+	}
+
+	ofdm_param signal_ofdm; //(BPSK_1_2);
+	signal_ofdm.encoding = BPSK_1_2;
+	signal_ofdm.n_bpsc = 1;
+	signal_ofdm.n_cbps = 48;
+	signal_ofdm.n_dbps = 24;
+	signal_ofdm.rate_field = 0x0D; // 0b00001101
+
+	frame_param signal_param; // (signal_ofdm, 0);
+	signal_param.psdu_size = 0;
+	signal_param.n_sym = (int) ceil((16 + 8 * signal_param.psdu_size + 6) / (double) signal_ofdm.n_dbps);
+	signal_param.n_data_bits = signal_param.n_sym * signal_ofdm.n_dbps;
+	signal_param.n_pad = signal_param.n_data_bits - (16 + 8 * signal_param.psdu_size + 6);
+	signal_param.n_encoded_bits = signal_param.n_sym * signal_ofdm.n_cbps;
+
+	// convolutional encoding (scrambling is not needed)
+	convolutional_encoding(signal_header, encoded_signal_header, signal_param.n_data_bits);
+	// interleaving
+	interleave(encoded_signal_header, out, signal_param.n_sym, signal_ofdm.n_cbps, signal_ofdm.n_bpsc, false);
+
+	/* free(signal_header); */
+	/* free(encoded_signal_header); */
+	/* free(interleaved_signal_header); */
+}
+
+static int do_packet_header_gen(unsigned int packet_len, uint8_t * out,
+		ofdm_param * d_ofdm, size_t d_ofdm_sz,
+		frame_param * d_frame, size_t d_frame_sz
+		) // int noutput_items, int ninput_items, uint8_t* input_items, uint8_t* output_items)
+{
+	//## From     int packet_headergenerator_bb_impl::work (int noutput_items,
+	//  NOTE: Need to know what type of header -- default or OFDM (?) as the
+	//    OFDM header does a scramble pass after the default header setup.
+	//    I'm pretty sure we are using OFDM here... BUT MAYBE NOT OFDM HEADERS?
+	/* I'm inlining this call, as it just calles gneerate_signal_field
+	   signal_field_header_formatter(packet_len, out); // , const std::vector<tag_t> &tags)
+	   */
+	generate_signal_field((char *) out, d_ofdm, d_ofdm_sz, d_frame, d_frame_sz); //, d_frame, d_ofdm);
+	return 48; // this is the length of the output header -- the convolutional encoded and interleaved header...
+}
+
+static float bpsk_chunks2sym(int index) {
+	if (index == 0) {
+		return -1;
+	}
+	return 1;
+}
+
+static int do_ofdm_carrier_allocator_cvc_impl_work(int noutput_items,
+		int ninput_items,
+		float * in_real, float * in_imag, // complex numbers
+		float * out_real, float * out_imag, // complex numbers
+		int* d_pilot_carriers, size_t d_pilot_carriers_sz,
+		int* d_occupied_carriers, size_t d_occupied_carriers_sz
+		) {
+const float d_sync_words_imag[d_num_sync_words][d_size_sync_words] = {
+	{
+		0.0,
+		0.0,
+		0.0,
+		0.0, //   4
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0, // 32
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0, // 64
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0, // 96
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
+	}, // 128
+	{
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		+1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
+	},
+	{
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		-1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0
+	},
+	{
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0
+	}
+};
+
+const float d_sync_words_real[d_num_sync_words][d_size_sync_words] = {
+	{
+		0.0,
+		0.0,
+		0.0,
+		0.0, //   4
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0, // 32
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0, // 64
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0, // 96
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
+	}, // 128
+	{
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		-1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		1.4719601443879746,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
+	},
+	{
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		-1,
+		0,
+		-1,
+		0,
+		-1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		0,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		1,
+		0,
+		1,
+		0,
+		-1,
+		0,
+		0,
+		0,
+		0,
+		0
+	},
+	{
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		1,
+		1,
+		-1,
+		-1,
+		1,
+		1,
+		-1,
+		1,
+		-1,
+		1,
+		1,
+		1,
+		1,
+		1,
+		1,
+		-1,
+		-1,
+		1,
+		1,
+		-1,
+		1,
+		-1,
+		1,
+		1,
+		1,
+		1,
+		0,
+		1,
+		-1,
+		-1,
+		1,
+		1,
+		-1,
+		1,
+		-1,
+		1,
+		-1,
+		-1,
+		-1,
+		-1,
+		-1,
+		1,
+		1,
+		-1,
+		-1,
+		1,
+		-1,
+		1,
+		-1,
+		1,
+		1,
+		1,
+		1,
+		0,
+		0,
+		0,
+		0,
+		0
+	}
+};
+
+
+	/* const gr_complex *in = (const gr_complex *) input_items[0]; */
+	/* gr_complex *out = (gr_complex *) output_items[0]; */
+	/* std::vector<tag_t> tags; */
+
+	DEBUG(printf("In ofdm_carrier_allocator_cvc_impl work with nout = %u and d_num_sync_words = %u\n", noutput_items, d_num_sync_words); fflush(stdout));
+	// Reset the contents of the output_items to 0x00 (so any not over-written remain 0x00?)
+	//memset((void *) out_real, 0x00, sizeof(float) * d_fft_len * noutput_items);
+	//memset((void *) out_imag, 0x00, sizeof(float) * d_fft_len * noutput_items);
+	for (int ti = 0; ti < d_fft_len * (noutput_items + d_num_sync_words); ti++) {
+		out_real[ti] = 0.0;
+		out_imag[ti] = 0.0;
+	}
+
+	// Copy Sync word
+	//printf("\nCopy sync words...\n");
+	int o_offset = 0;
+	for (unsigned i = 0; i < d_num_sync_words; i++) {
+		//memcpy((void *) out, (void *) &d_sync_words[i][0], sizeof(gr_complex) * d_fft_len);
+		int oidx = o_offset;
+		for (int ti = 0; ti < d_fft_len; ti++) {
+			out_real[oidx] = d_sync_words_real[i][ti];
+			out_imag[oidx] = d_sync_words_imag[i][ti];
+			DEBUG(printf(" out[%4u] = %19.16f + %19.16f i = d_sync_words[%u][%2u] = %19.16f + %19.16f i\n", oidx, out_real[oidx], out_imag[oidx], i, ti, d_sync_words_real[i][ti], d_sync_words_imag[i][ti]));
+			oidx++;
+		}
+		DEBUG(printf("\n"));
+		//out += d_fft_len;
+		o_offset += d_fft_len;
+	}
+	//printf("Done initializing out using d_sync_words_real & d_sync_words_imag\n");
+
+	// Copy data symbols
+	long n_ofdm_symbols = 0; // Number of output items
+	int curr_set = 0;
+	int symbols_to_allocate = d_size_occupied_carriers;
+	int symbols_allocated = 0;
+	//printf("\nCopy data symbols -- symbols_to_allocate = %u\n", symbols_to_allocate);
+	for (int i = 0; i < ninput_items; i++) {
+		if (symbols_allocated == 0) {
+			/*   // Copy all tags associated with these input symbols onto this OFDM symbol */
+			/*   get_tags_in_range(tags, 0, */
+			/*                      nitems_read(0)+i, */
+			/*                      nitems_read(0)+std::min(i+symbols_to_allocate, (int) ninput_items[0]) */
+			/*                      ); */
+			/*   for (unsigned t = 0; t < tags.size(); t++) { */
+			/*      add_item_tag( */
+			/*                   0, */
+			/*                   nitems_written(0) + n_ofdm_symbols + (n_ofdm_symbols == 0 ? 0 : d_sync_words.size()), */
+			/*                   tags[t].key, */
+			/*                   tags[t].value */
+			/*                   ); */
+			/*   } */
+			n_ofdm_symbols++;
+		}
+		//printf("Accessing d_occupied_carriers[%d][%d]\n", curr_set, symbols_allocated);
+		//printf("Accessing d_occupied_carriers[%d] = %d\n", curr_set, d_occupied_carriers[curr_set]);
+		//printf("d_occupied_carriers[%d][%d] = %d\n", curr_set, symbols_allocated, d_occupied_carriers[(curr_set * d_num_occupied_carriers) + symbols_allocated]);
+		int o_idx = o_offset + (n_ofdm_symbols - 1) * d_fft_len + 
+										d_occupied_carriers[(curr_set * d_num_occupied_carriers) + symbols_allocated];
+		//printf("o_idx = %d\n", o_idx);
+		out_real[o_idx] = in_real[i];
+		out_imag[o_idx] = in_imag[i];
+		//printf("Initialized out_real at index %d\n", i);
+		symbols_allocated++;
+		if (symbols_allocated == symbols_to_allocate) {
+			curr_set = (curr_set + 1) % d_num_occupied_carriers; //.size();
+			symbols_to_allocate = d_size_occupied_carriers; //[curr_set]; //.size();
+			symbols_allocated = 0;
+		}
+		//printf("Updated symbols_allocated\n");
+	}
+
+	//printf("\nCopy pilot symbols: n_ofdm_symbols = %lu\n", n_ofdm_symbols);
+	// Copy pilot symbols
+	for (int i = 0; i < n_ofdm_symbols; i++) {
+		for (unsigned k = 0; k < d_size_pilot_carriers[i % d_num_pilot_carriers]; k++) {
+			int pcidx = i % d_num_pilot_carriers;
+			int psidx = i % d_num_pilot_symbols;
+			//int oidx = o_offset + i * d_fft_len + d_pilot_carriers[i % d_num_pilot_carriers][k];
+			int oidx = o_offset + i * d_fft_len + d_pilot_carriers[(pcidx * d_num_pilot_carriers) + k];
+			out_real[oidx] = 0; //d_pilot_symbols_real[psidx][k];
+			out_imag[oidx] = 0; //d_pilot_symbols_imag[psidx][k];
+		}
+	}
+	//printf("\nReturning %lu (symbols + sync_words)\n", n_ofdm_symbols + d_num_sync_words);
+	return n_ofdm_symbols + d_num_sync_words;
+}
+
+static void
+do_ofdm_cyclic_prefixer_impl_work(int n_symbols, const float * in_real, const float * in_imag, float * out_real, float * out_imag) {
+	int d_input_size = 64;
+	int d_output_size = d_input_size + d_cp_size;
+	float d_up_flank[d_rolloff_len - 1];
+	float d_down_flank[d_rolloff_len - 1];
+
+	float d_delay_line_real[d_rolloff_len - 1];
+	float d_delay_line_imag[d_rolloff_len - 1];
+
+	int symbols_to_read = n_symbols; // std::min(noutput_items / (int) d_output_size, ninput_items[0]);
+
+	// The actual flanks are one sample shorter than d_rolloff_len, because the
+	// first sample of the up- and down flank is always zero and one, respectively
+	for (int i = 1; i < d_rolloff_len; i++) {
+		d_up_flank[i - 1] = 0.5 * (1 + cos(M_PI * i / d_rolloff_len - M_PI));
+		d_down_flank[i - 1] = 0.5 * (1 + cos(M_PI * (d_rolloff_len - i) / d_rolloff_len - M_PI));
+		d_delay_line_real[i - 1] = 0; // Initialize delay line to zero
+		d_delay_line_imag[i - 1] = 0;
+	}
+
+	// 2) Do the cyclic prefixing and, optionally, the pulse shaping
+	int out_offset = 0;
+	int in_offset = 0;
+	for (int sym_idx = 0; sym_idx < symbols_to_read; sym_idx++) {
+		//memcpy((void *)(out + d_cp_size), (void *) in, d_fft_len * sizeof(gr_complex));
+		for (int i = 0; i < d_fft_len; i++) {
+			out_real[out_offset + i + d_cp_size] = in_real[in_offset + i];
+			out_imag[out_offset + i + d_cp_size] = in_imag[in_offset + i];
+		}
+		//memcpy((void *) out, (void *) (in + d_fft_len - d_cp_size), d_cp_size * sizeof(gr_complex));
+		for (int i = 0; i < d_cp_size; i++) {
+			out_real[out_offset + i] = in_real[in_offset + i + d_fft_len - d_cp_size];
+			out_imag[out_offset + i] = in_imag[in_offset + i + d_fft_len - d_cp_size];
+		}
+		for (int i = 0; i < d_rolloff_len - 1; i++) {
+			out_real[out_offset + i] = out_real[out_offset + i] * d_up_flank[i] + d_delay_line_real[i];
+			out_imag[out_offset + i] = out_imag[out_offset + i] * d_up_flank[i] + d_delay_line_imag[i];
+			d_delay_line_real[i] = in_real[in_offset + i] * d_down_flank[i];
+			d_delay_line_imag[i] = in_imag[in_offset + i] * d_down_flank[i];
+		}
+		in_offset += d_fft_len;
+		out_offset += d_output_size;
+	}
+
+	// 3) If we're in packet mode: (we are)
+	//    - flush the delay line, if applicable
+	for (unsigned i = 0; i < (d_rolloff_len - 1); i++) {
+		out_real[out_offset + i] = d_delay_line_real[i];
+		out_imag[out_offset + i] = d_delay_line_imag[i];
+	}
+}
+
+
 /***********************************************************************************
 	void encode_transmit_occgrid(int *n_cmp_bytes, size_t n_cmp_bytes_sz,
 	unsigned char *cmp_data, size_t cmp_data_sz,
@@ -1740,6 +2895,72 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 	__hetero_task_end(T1);
 #endif
 #else
+	void *T_Sacrificial = __hetero_task_begin(
+		43,
+		lidar_inputs, lidarin_sz,
+		n_cmp_bytes, n_cmp_bytes_sz,
+		cmp_data, cmp_data_sz,
+		observationVal, observations_sz, 
+		timer_sequentialize, timer_sequentialize_sz,
+		AVxyzw, AVxyzw_sz,
+		rolling_window, rolling_window_sz, 
+		min_obstacle_height, min_obstacle_height_sz,
+		max_obstacle_height, max_obstacle_height_sz, 
+		raytrace_range, raytrace_range_sz,
+		size_x, size_x_sz, 
+		size_y, size_y_sz, 
+		resolution, resolution_sz,
+		curr_obs_cp, curr_obs_cp_sz, 
+		next_obs_cp, next_obs_cp_sz, 
+		lmap_count_cp, lmap_count_cp_sz,
+		n_xmit_out, n_xmit_out_sz,
+		xmit_out_real, xmit_out_real_sz,
+		xmit_out_imag, xmit_out_imag_sz,
+		psdu_len, psdu_len_sz,
+		pckt_hdr_out, pckt_hdr_out_sz,
+		pckt_hdr_len, pckt_hdr_len_sz,
+		msg_stream_real, msg_stream_real_sz,
+		msg_stream_imag, msg_stream_imag_sz,
+		ofdm_car_str_real, ofdm_car_str_real_sz,
+		ofdm_car_str_imag, ofdm_car_str_imag_sz,
+		ofc_res, ofc_res_sz,
+		fft_out_real, fft_out_real_sz,
+		fft_out_imag, fft_out_imag_sz,
+		cycpref_out_real, cycpref_out_real_sz,
+		cycpref_out_imag, cycpref_out_imag_sz,
+		d_occupied_carriers, d_occupied_carriers_sz,
+		d_psdu_arg, d_psdu_arg_sz,
+		d_map_out_copy_arg, d_map_out_copy_arg_sz,
+		d_seq_nr, d_seq_nr_sz, 
+		d_scrambler, d_scrambler_sz, 
+		d_symbols, d_symbols_sz, 
+		d_symbols_offset, d_symbols_offset_sz, 
+		d_symbols_len, d_symbols_len_sz,
+		d_ofdm, d_ofdm_sz,
+		d_frame, d_frame_sz,
+		d_pilot_carriers, d_pilot_carriers_sz,
+		crcTable, crcTable_sz,
+		17, 
+		observationVal, observations_sz,
+		n_cmp_bytes, n_cmp_bytes_sz, 
+		cmp_data, cmp_data_sz,
+		n_xmit_out, n_xmit_out_sz,
+		xmit_out_real, xmit_out_real_sz,
+		xmit_out_imag, xmit_out_imag_sz,
+		d_psdu_arg, d_psdu_arg_sz,
+		d_map_out_copy_arg, d_map_out_copy_arg_sz,
+		d_seq_nr, d_seq_nr_sz, 
+		d_scrambler, d_scrambler_sz, 
+		d_symbols, d_symbols_sz, 
+		d_symbols_offset, d_symbols_offset_sz, 
+		d_symbols_len, d_symbols_len_sz,
+		d_ofdm, d_ofdm_sz,
+		d_frame, d_frame_sz,
+		d_pilot_carriers, d_pilot_carriers_sz,
+		crcTable, crcTable_sz, 
+		"sacrificial_cpu_task");
+	__hpvm__hint(CPU_TARGET);
+	void * Section_Main = __hetero_section_begin();
 
 	// CloudToOccgrid
 	{
@@ -1907,6 +3128,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 #endif
 
 
+#if !defined(COLLAPSE_NODES)
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
 	void * T2 = __hetero_task_begin(29,
 		// Args for encode_occgrid
@@ -1989,8 +3211,831 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
 	__hetero_task_end(T2);
 #endif
+#else
+// do_xmit_pipeline inling for flattening
+// rename arguments for inlined code
+	int *in_msg_len = n_cmp_bytes;
+	size_t in_msg_len_sz = n_cmp_bytes_sz;
+	char *in_msg = (char*) cmp_data;
+	size_t in_msg_sz = cmp_data_sz;
+	int *num_final_outs = n_xmit_out;
+        size_t num_final_outs_sz = n_xmit_out_sz;
+	float *final_out_real = xmit_out_real;
+	size_t final_out_real_sz = xmit_out_real_sz;
+	float *final_out_imag = xmit_out_imag;
+	size_t final_out_imag_sz = xmit_out_imag_sz;
+	uint8_t *d_psdu = d_psdu_arg;
+	size_t d_psdu_size = d_psdu_arg_sz;
+	uint8_t *d_map_out = d_map_out_copy_arg;
+	size_t d_map_out_sz = d_map_out_copy_arg_sz;
+
+// do_xmit_pipeline definition
+#if defined(HPVM)
+									void * T1 = __hetero_task_begin(6, in_msg_len, in_msg_len_sz, in_msg, in_msg_sz, psdu_len, psdu_len_sz,
+											d_psdu, d_psdu_size, 
+											d_seq_nr, d_seq_nr_sz,
+											crcTable, crcTable_sz,
+											4, psdu_len, psdu_len_sz,  d_psdu, d_psdu_size, 
+											d_seq_nr, d_seq_nr_sz,
+											crcTable, crcTable_sz,
+											"mac_data_task_wrapper");
+						__hpvm__hint(DEVICE);
+#endif
+									            * psdu_len = 0;
+            generate_mac_data_frame(in_msg, *in_msg_len, psdu_len, d_psdu, d_psdu_size, d_seq_nr, d_seq_nr_sz,
+                            crcTable, crcTable_sz);
+#ifdef INT_TIME
+            gettimeofday(&x_genmacfr_stop, NULL);
+            x_genmacfr_sec += x_genmacfr_stop.tv_sec - x_genmacfr_start.tv_sec;
+            x_genmacfr_usec += x_genmacfr_stop.tv_usec - x_genmacfr_start.tv_usec;
+#endif
+            //printf("Done with generate_mac_data_frame\n");
+
+#if defined(HPVM)
+									__hetero_task_end(T1);
+#endif
+
+#if defined(HPVM)
+									void * T2 = __hetero_task_begin(11, pckt_hdr_out, pckt_hdr_out_sz, psdu_len, psdu_len_sz, pckt_hdr_len, pckt_hdr_len_sz,
+											d_psdu, d_psdu_size, d_map_out, d_map_out_sz,	
+											d_scrambler, d_scrambler_sz,
+											d_symbols, d_symbols_sz,
+											d_symbols_offset, d_symbols_offset_sz,
+											d_symbols_len, d_symbols_len_sz,
+											d_ofdm, d_ofdm_sz,
+											d_frame, d_frame_sz,
+											11, pckt_hdr_out, pckt_hdr_out_sz, psdu_len, psdu_len_sz, pckt_hdr_len, pckt_hdr_len_sz,
+											d_scrambler, d_scrambler_sz,
+											d_symbols, d_symbols_sz,
+											d_symbols_offset, d_symbols_offset_sz,
+											d_symbols_len, d_symbols_len_sz,
+											d_ofdm, d_ofdm_sz,
+											d_frame, d_frame_sz,
+											d_psdu, d_psdu_size, d_map_out, d_map_out_sz, "mapper_task_wrapper");
+#endif
+
+#if defined(HPVM)
+						__hpvm__hint(DEVICE);
+#endif
+#ifdef INT_TIME
+            gettimeofday(&x_domapwk_start, NULL);
+#endif
+
+            // do_mapper_work(32768, psdu_len); // noutput always seems to be 32768 ? Actualy data size is 24528 ?
+            do_mapper_work(*psdu_len, d_psdu, d_psdu_size, d_map_out, d_map_out_sz,
+                d_scrambler, d_scrambler_sz,
+                d_symbols, d_symbols_sz,
+                d_symbols_offset, d_symbols_offset_sz,
+                d_symbols_len, d_symbols_len_sz,
+                d_ofdm, d_ofdm_sz,
+                d_frame, d_frame_sz
+                    ); // noutput always seems to be 32768 ? Actualy data size is 24528 ?
+            // The mapper results in 24528 output bytes for a 1500 character input payload
+#ifdef INT_TIME
+            gettimeofday(&x_domapwk_stop, NULL);
+            x_domapwk_sec += x_domapwk_stop.tv_sec - x_domapwk_start.tv_sec;
+            x_domapwk_usec += x_domapwk_stop.tv_usec - x_domapwk_start.tv_usec;
+#endif
+            //printf("Done with do_mapper_work\n");
+
+#if defined(HPVM)
+									__hetero_task_end(T2);
+#endif
+
+#if defined(HPVM)
+									void * T3 = __hetero_task_begin(4, pckt_hdr_out, pckt_hdr_out_sz, pckt_hdr_len, pckt_hdr_len_sz,
+											d_ofdm, d_ofdm_sz,
+											d_frame, d_frame_sz,
+											4, pckt_hdr_out, pckt_hdr_out_sz, pckt_hdr_len, pckt_hdr_len_sz, 
+											d_ofdm, d_ofdm_sz,
+											d_frame, d_frame_sz,
+											"packer_hdr_task_wrapper");
+#endif
+#if defined(HPVM)
+						__hpvm__hint(CPU_TARGET); // TODO: Put on FPGA
+#endif
+#if defined(INT_TIME) && !defined(HPVM)
+            gettimeofday(&x_phdrgen_start, NULL);
+#endif
+
+            int mapper_payload_size = d_frame->n_encoded_bits;
+            // uint8_t pckt_hdr_out[64]; // I think this only needs to be 48 bytes...
+            *pckt_hdr_len = do_packet_header_gen(mapper_payload_size, pckt_hdr_out, d_ofdm, d_ofdm_sz, d_frame, d_frame_sz);
+
+#if defined(INT_TIME) && !defined(HPVM)
+            gettimeofday(&x_phdrgen_stop, NULL);
+            x_phdrgen_sec += x_phdrgen_stop.tv_sec - x_phdrgen_start.tv_sec;
+            x_phdrgen_usec += x_phdrgen_stop.tv_usec - x_phdrgen_start.tv_usec;
+#endif
+	
+            DO_NUM_IOS_ANALYSIS(printf("Called do_packet_header_gen: IN payload_size %u OUT packet_hdr_len %u\n",
+                  mapper_payload_size, *pckt_hdr_len));
+            DEBUG(printf("packet_header = ");
+                for (int i = 0; i < *pckt_hdr_len; i++) {
+                printf("%1x ", pckt_hdr_out[i]);
+                }
+                printf("\n"));
+            //printf("Done with do_packet_header_gen\n");
+
+#if defined(HPVM)
+									__hetero_task_end(T3);
+#endif
+
+#if defined(HPVM)
+									void * T4 = __hetero_task_begin(7, pckt_hdr_out, pckt_hdr_out_sz, pckt_hdr_len, pckt_hdr_len_sz,
+											msg_stream_real, msg_stream_real_sz, msg_stream_imag, msg_stream_imag_sz,
+											d_map_out, d_map_out_sz,
+											d_ofdm, d_ofdm_sz,
+											d_frame, d_frame_sz,
+											5, msg_stream_real, msg_stream_real_sz, msg_stream_imag, msg_stream_imag_sz,
+											d_map_out, d_map_out_sz,
+											d_ofdm, d_ofdm_sz,
+											d_frame, d_frame_sz,
+											"chuck_strm_task_wrapper");
+#endif
+
+#if defined(HPVM)
+							 __hpvm__hint(DEVICE);
+
+#endif
+
+						// Convert the header chunks to symbols (uses simple BPSK_1_2 map: 0 -> -1+0i and 1 -> +1+0i)
+						// Convert the payload chunks to symbols (for now also using simple BPSK_1_2 map: 0 -> -1+0i and 1 -> +1+0i)
+						// We will also do the Tagged Stream Mux functionality (concatenate the Payload after the Header)
+						DEBUG(printf("\nConverting to chunks, and doing the tagged stream mux stuff...\n"));
+#ifdef INT_TIME 
+						gettimeofday(&x_ck2sym_start, NULL);
+#endif
+
+						// float msg_stream_real[MAX_SIZE];
+						// float msg_stream_imag[MAX_SIZE];
+						int msg_idx = 0;
+						/*float bpsk_chunks2sym[2] = {
+						  -1.0,
+						  1.0
+						  };*/
+						// This is to clear any left-over storage locations...
+						for (int i = 0; i < MAX_SIZE; i++) {
+							msg_stream_real[i] = 0.0;
+							msg_stream_imag[i] = 0.0;
+						}
+						int terminationCondition = (*pckt_hdr_len);
+						for (int i = 0; i < terminationCondition; i++) {
+							msg_stream_real[msg_idx] = bpsk_chunks2sym(pckt_hdr_out[i]);
+							msg_stream_imag[msg_idx] = 0.0;
+							msg_idx++;
+						}
+						//  printf("\n");
+						int mapper_payload_size_cp = d_frame->n_encoded_bits; // HPVM: Copied from T3 (as d_frame was not modified by T3)
+						for (int i = 0; i < mapper_payload_size_cp; i++) {
+							msg_stream_real[msg_idx] = bpsk_chunks2sym(d_map_out[i]);
+							msg_stream_imag[msg_idx] = 0.0;
+							msg_idx++;
+						}
+						//  printf("\n");
+						//printf("Done with chuck_strm\n");
+
+#if defined(INT_TIME) && !defined(HPVM)
+						gettimeofday(&x_ck2sym_stop, NULL);
+						x_ck2sym_sec += x_ck2sym_stop.tv_sec - x_ck2sym_start.tv_sec;
+						x_ck2sym_usec += x_ck2sym_stop.tv_usec - x_ck2sym_start.tv_usec;
+#endif
+						DEBUG(printf("\nTagged Stream Mux output:\n");
+								for (int i = 0; i < ((*pckt_hdr_len) + mapper_payload_size_cp); i++) {
+								printf(" TSM_OUT %5u : %4.1f %4.1f\n", i, msg_stream_real[i], msg_stream_imag[i]);
+								});
+
+#if false
+
+									// Convert the header chunks to symbols (uses simple BPSK_1_2 map: 0 -> -1+0i and 1 -> +1+0i)
+									// Convert the payload chunks to symbols (for now also using simple BPSK_1_2 map: 0 -> -1+0i and 1 -> +1+0i)
+									// We will also do the Tagged Stream Mux functionality (concatenate the Payload after the Header)
+									DEBUG(printf("\nConverting to chunks, and doing the tagged stream mux stuff...\n"));
+#ifdef INT_TIME
+									gettimeofday(&x_ck2sym_start, NULL);
+#endif
+
+									// float msg_stream_real[MAX_SIZE];
+									// float msg_stream_imag[MAX_SIZE];
+									//
+									int msg_idx = 0;
+									//	float bpsk_chunks2sym[2] = { -1.0, 1.0 };
+									for (int i = 0; i < (*pckt_hdr_len); i++) {
+										msg_stream_real[msg_idx] = bpsk_chunks2sym(pckt_hdr_out[i]);
+										msg_stream_imag[msg_idx] = 0.0;
+										//    DEBUG(printf("HDR: msg_stream[%2u] = %4.1f + %4.1f\n", msg_idx, msg_stream_real[msg_idx], msg_stream_imag[msg_idx]));
+										msg_idx++;
+									}
+									//  printf("\n");
+									int mapper_payload_size_cp = d_frame->n_encoded_bits; // HPVM: Copied from T3 (as d_frame was not modified by T3)
+									for (int i = 0; i < mapper_payload_size_cp; i++) {
+										msg_stream_real[msg_idx] = bpsk_chunks2sym(d_map_out[i]);
+										msg_stream_imag[msg_idx] = 0.0;
+										//    DEBUG(printf("PYLD: msg_stream[%4u] = %4.1f + %4.1f\n", msg_idx, msg_stream_real[msg_idx], msg_stream_imag[msg_idx]));
+										msg_idx++;
+									}
+									//  printf("\n");
+									// This is to clear any left-over storage locations...
+									for (int i = msg_idx; i < MAX_SIZE; i++) {
+										msg_stream_real[i] = 0.0;
+										msg_stream_imag[i] = 0.0;
+										//    DEBUG(printf("LAST: msg_stream[%4u] = %4.1f + %4.1f\n", i, msg_stream_real[i], msg_stream_imag[i]));
+									}
+
+#ifdef INT_TIME
+									gettimeofday(&x_ck2sym_stop, NULL);
+									x_ck2sym_sec += x_ck2sym_stop.tv_sec - x_ck2sym_start.tv_sec;
+									x_ck2sym_usec += x_ck2sym_stop.tv_usec - x_ck2sym_start.tv_usec;
+#endif
+									DEBUG(printf("\nTagged Stream Mux output:\n");
+											for (int i = 0; i < ((*pckt_hdr_len) + mapper_payload_size_cp); i++) {
+											printf(" TSM_OUT %5u : %4.1f %4.1f\n", i, msg_stream_real[i], msg_stream_imag[i]);
+											});
+
+#endif // if false
+
+#if defined(HPVM)
+									__hetero_task_end(T4);
+#endif
+
+#if defined(HPVM)
+									void * T5 = __hetero_task_begin(9, msg_stream_real, msg_stream_real_sz, msg_stream_imag, msg_stream_imag_sz,
+											ofdm_car_str_real, ofdm_car_str_real_sz, ofdm_car_str_imag, ofdm_car_str_imag_sz,
+											ofc_res, ofc_res_sz,
+											d_ofdm, d_ofdm_sz, 
+											d_frame, d_frame_sz,
+											d_pilot_carriers, d_pilot_carriers_sz,
+											d_occupied_carriers, d_occupied_carriers_sz,
+											6, ofdm_car_str_real, ofdm_car_str_real_sz, ofdm_car_str_imag, ofdm_car_str_imag_sz,
+											d_ofdm, d_ofdm_sz, 
+											d_frame, d_frame_sz,
+											d_pilot_carriers, d_pilot_carriers_sz,
+											ofc_res, ofc_res_sz, "carrier_alloc_task_wrapper");
+#endif
+
+#if defined(HPVM)
+						__hpvm__hint(DEVICE); 
+#endif
+
+						// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));
+						//DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n",
+						//			d_frame->n_sym, d_frame->n_encoded_bits));
+
+						// float ofdm_car_str_real[ofdm_max_out_size];
+						// float ofdm_car_str_imag[ofdm_max_out_size];
+
+						//DO_NUM_IOS_ANALYSIS(printf("Calling do_ofdm_carrier_alloc: IN n_sym %u n_enc_bits %u\n", d_frame->n_sym,
+						//			d_frame->n_encoded_bits));
+						// int ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(520, 24576, msg_stream_real, msg_stream_imag, ofdm_car_str_real, ofdm_car_str_imag);
+#ifdef INT_TIME
+	//					gettimeofday(&x_ocaralloc_start, NULL);
+#endif
+						*ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(d_frame->n_sym, d_frame->n_encoded_bits, 
+											 msg_stream_real, msg_stream_imag, 	ofdm_car_str_real, ofdm_car_str_imag, 
+											 d_pilot_carriers, d_pilot_carriers_sz, d_occupied_carriers, d_occupied_carriers_sz); 
+
+						/*
+						DO_NUM_IOS_ANALYSIS(printf("Back from do_ofdm_carrier_alloc: OUT ofc_res %u : %u max outputs (of %u)\n", 
+														ofc_res, ofc_res * d_fft_len, ofdm_max_out_size));
+						DEBUG(printf(" return value was %u so max %u outputs\n", *ofc_res, (*ofc_res) * d_fft_len); 
+											 printf(" do_ofdm_carrier_allocator_cvc_impl_work output:\n");
+								for (int ti = 0; ti < ((*ofc_res) * 64); ti++) {
+								printf("  ofdm_car %6u : %9.6f + %9.6f i\n", ti, ofdm_car_str_real[ti], ofdm_car_str_imag[ti]);
+								});
+						printf("Done with carrier_alloc\n");
+						*/
+
+#ifdef INT_TIME
+						gettimeofday(&x_ocaralloc_stop, NULL);
+						x_ocaralloc_sec += x_ocaralloc_stop.tv_sec - x_ocaralloc_start.tv_sec;
+						x_ocaralloc_usec += x_ocaralloc_stop.tv_usec - x_ocaralloc_start.tv_usec;
+#endif
+
+#if false
+
+									// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));
+									DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n",
+												d_frame->n_sym, d_frame->n_encoded_bits));
+
+									// float ofdm_car_str_real[ofdm_max_out_size];
+									// float ofdm_car_str_imag[ofdm_max_out_size];
+
+									DO_NUM_IOS_ANALYSIS(printf("Calling do_ofdm_carrier_alloc: IN n_sym %u n_enc_bits %u\n", d_frame->n_sym,
+												d_frame->n_encoded_bits));
+									// int ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(520, 24576, msg_stream_real, msg_stream_imag, ofdm_car_str_real, ofdm_car_str_imag);
+#ifdef INT_TIME
+									gettimeofday(&x_ocaralloc_start, NULL);
+#endif
+									* ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(d_frame->n_sym, d_frame->n_encoded_bits,
+											msg_stream_real, msg_stream_imag, ofdm_car_str_real, ofdm_car_str_imag);
+									DO_NUM_IOS_ANALYSIS(printf("Back from do_ofdm_carrier_alloc: OUT ofc_res %u : %u max outputs (of %u)\n", ofc_res,
+												ofc_res * d_fft_len, ofdm_max_out_size));
+									DEBUG(printf(" return value was %u so max %u outputs\n", *ofc_res, (*ofc_res) * d_fft_len); printf(" do_ofdm_carrier_allocator_cvc_impl_work output:\n");
+											for (int ti = 0; ti < ((*ofc_res) * 64); ti++) {
+											printf("  ofdm_car %6u : %9.6f + %9.6f i\n", ti, ofdm_car_str_real[ti], ofdm_car_str_imag[ti]);
+											});
+
+#ifdef INT_TIME
+									gettimeofday(&x_ocaralloc_stop, NULL);
+									x_ocaralloc_sec += x_ocaralloc_stop.tv_sec - x_ocaralloc_start.tv_sec;
+									x_ocaralloc_usec += x_ocaralloc_stop.tv_usec - x_ocaralloc_start.tv_usec;
+#endif
+
+#endif // if false
+
+#if defined(HPVM)
+									__hetero_task_end(T5);
+#endif
+
+#if defined(HPVM)
+									void * T6 = __hetero_task_begin(5, ofc_res, ofc_res_sz, ofdm_car_str_real, ofdm_car_str_real_sz,
+											ofdm_car_str_imag, ofdm_car_str_imag_sz, fft_out_real, fft_out_real_sz,
+											fft_out_imag, fft_out_imag_sz,
+											2, fft_out_real, fft_out_real_sz, fft_out_imag, fft_out_imag_sz, "xmit_fft_task");
+#endif
+
+#if !defined(HPVM)
+#ifdef INT_TIME
+									gettimeofday(&x_fft_start, NULL);
+#endif
+
+									// The FFT operation...  This is where we are currently "broken"
+									//   The outputs match for the first one or two 64-entry windows, and then diverge a lot...
+									DEBUG(printf("\nCalling do_xmit_fft_work for %u data values\n", ofdm_max_out_size));
+									int n_ins = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
+									// float fft_out_real[ofdm_max_out_size];
+									// float fft_out_imag[ofdm_max_out_size];
+
+									float scale = 1 / sqrt(52.0);
+
+									DO_NUM_IOS_ANALYSIS(printf("Calling do_xmit_fft_work: IN n_ins %u\n", n_ins));
+#endif
+
+#if defined(HPVM)
+	__hpvm__hint(DEVICE);
+#endif
+	{
+		int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
+		float scale = 1 / sqrt(52.0); // HPVM: Copied from do_xmit_pipeline in T6
+
+		// Do the FFT in 64-entry windows, and add the "shift" operation to each
+		//   Also add the weighting/scaling for the window
+		bool inverse = true;
+		bool shift = true;
+		bool swap_odd_signs = false; // We shift the inputs instead?
+		int size = d_fft_len;
+		int log_size = d_fft_logn;
+		float recluster[2] = {1.0, 1.0}; // used to alter sign of "odd" fft results
+		if (swap_odd_signs) {
+			recluster[1] = -1.0;
+		}
+
+		// Show the function-time input_{real/imag}
+		FFT_DEBUG(
+				for (int k = 0; k < (n_inputs + (size - 1)); k += size) {
+				for (int i = 0; i < size; i++) {
+				if (k == 0) { //  && (i < 2)
+					printf("  Call_INPUT %u : REAL %f IMAG %f\n", k + i, ofdm_car_str_real[k + i], ofdm_car_str_imag[k + i]);
+				}
+				}
+				});
+				}
+
+#ifdef XMIT_HW_FFT
+
+		float scale = 1 / sqrt(52.0); // HPVM: Copied from do_xmit_pipeline in T6
+		int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
+
+		// Do the FFT in 64-entry windows, and add the "shift" operation to each
+		//   Also add the weighting/scaling for the window
+		bool inverse = true;
+		bool shift = true;
+		bool swap_odd_signs = false; // We shift the inputs instead?
+		int size = d_fft_len;
+		int log_size = d_fft_logn;
+		float recluster[2] = {1.0, 1.0}; // used to alter sign of "odd" fft results
+		if (swap_odd_signs) {
+			recluster[1] = -1.0;
+		}
+
+		// Now we call the init_xmit_fft_parameters for the target FFT HWR accelerator and the specific log_nsamples for this invocation
+		int num_ffts = (n_inputs + (size - 1)) / size;
+		const int fn = 0;
+		const uint32_t log_nsamples = 6;
+		const uint32_t do_inverse = 1;
+		const uint32_t do_shift = 1;
+		const uint32_t scale_factor = 1;
+		FFT_DEBUG(printf("  XMIT: Calling init_xmit_fft_parms ln %u nf %u inv %u sh %u scale %u\n", log_nsamples, num_ffts, do_inverse, do_shift, scale_factor));
+		init_xmit_fft_parameters(fn, log_nsamples, num_ffts, do_inverse, do_shift, scale_factor);
+
+#ifdef INT_TIME
+		gettimeofday(&(x_fHcvtin_start), NULL);
+#endif // INT_TIME
+		// convert input from float to fixed point
+		// We also SCALE it here (but we should be able to do that in the HWR Accel later)
+		{ // scope for jidx
+			int jidx = 0;
+			for (int k = 0; k < (n_inputs + (size - 1)); k += size) {
+				for (int i = 0; i < size; i++) {
+					xmit_fftHW_li_mem[fn][jidx++] = float2fx(ofdm_car_str_real[k + i] * scale, FX_IL); // NOTE: when we enable scale is HW remove it from here.
+					xmit_fftHW_li_mem[fn][jidx++] = float2fx(ofdm_car_str_imag[k + i] * scale, FX_IL); // NOTE: when we enable scale is HW remove it from here.
+					FFT_DEBUG(
+							if ((k == 0)) { // && (i < 2)
+								printf(" IN_R %u : %f * %f = %f at %p\n", k + i, scale, ofdm_car_str_real[k + i], scale * ofdm_car_str_real[k + i], &(xmit_fftHW_li_mem[fn][jidx - 2]));
+								printf(" IN_I %u : %f * %f = %f at %p\n", k + i, scale, ofdm_car_str_imag[k + i], scale * ofdm_car_str_imag[k + i], &(xmit_fftHW_li_mem[fn][jidx - 1]));
+								usleep(50000);
+							});
+							}
+				}
+			} // scope for jidx
+#ifdef INT_TIME
+			gettimeofday(&x_fHcvtin_stop, NULL);
+			x_fHcvtin_sec += x_fHcvtin_stop.tv_sec - x_fHcvtin_start.tv_sec;
+			x_fHcvtin_usec += x_fHcvtin_stop.tv_usec - x_fHcvtin_start.tv_usec;
+#endif // INT_TIME
+
+			// Call the FFT Accelerator
+			//    NOTE: Currently this is blocking-wait for call to complete
+			FFT_DEBUG(printf("XMIT: calling the HW_XMIT_FFT[%u]\n", fn); usleep(50000));
+
+#ifdef INT_TIME
+			gettimeofday(&(x_fHcomp_start), NULL);
+#endif // INT_TIME
+			xmit_fft_in_hw(&(xmit_fftHW_fd[fn]), &(xmit_fftHW_desc[fn]));
+#ifdef INT_TIME
+			gettimeofday(&x_fHcomp_stop, NULL);
+			x_fHcomp_sec += x_fHcomp_stop.tv_sec - x_fHcomp_start.tv_sec;
+			x_fHcomp_usec += x_fHcomp_stop.tv_usec - x_fHcomp_start.tv_usec;
+#endif
+			// convert output from fixed point to float
+			FFT_DEBUG(printf("EHFA:   converting from fixed-point to float and reclustering...\n"));
+#ifdef INT_TIME
+			gettimeofday(&(x_fHcvtout_start), NULL);
+#endif // INT_TIME
+			{ // scope for jidx
+				int jidx = 0;
+				for (int k = 0; k < (n_inputs + (size - 1)); k += size) {
+					for (int i = 0; i < size; i++) {
+						//fft_out_real[k + i] = recluster[i&0x1]*(float)fx2float(xmit_fftHW_lmem[fn][jidx++], FX_IL);
+						//fft_out_imag[k + i] = recluster[i&0x1]*(float)fx2float(xmit_fftHW_lmem[fn][jidx++], FX_IL);
+						float valr = (float) fx2float(xmit_fftHW_lo_mem[fn][jidx++], FX_IL);
+						float vali = (float) fx2float(xmit_fftHW_lo_mem[fn][jidx++], FX_IL);
+						fft_out_real[k + i] = recluster[i & 0x1] * valr;
+						fft_out_imag[k + i] = recluster[i & 0x1] * vali;
+						FFT_DEBUG(
+								if (k == 0) {
+								printf("  OUT_R %u : rc %d : Vr %f R %f at %p\n", k + i, recluster[i & 0x1], valr, fft_out_real[k + i], &(xmit_fftHW_lo_mem[fn][jidx - 2]));
+								printf("  OUT_I %u : rc %d : Vr %f I %f at %p\n", k + i, recluster[i & 0x1], vali, fft_out_imag[k + i], &(xmit_fftHW_lo_mem[fn][jidx - 1]));
+								usleep(50000);
+								});
+					}
+				}
+			} // scope for jidx
+#ifdef INT_TIME
+			gettimeofday(&x_fHcvtout_stop, NULL);
+			x_fHcvtout_sec += x_fHcvtout_stop.tv_sec - x_fHcvtout_start.tv_sec;
+			x_fHcvtout_usec += x_fHcvtout_stop.tv_usec - x_fHcvtout_start.tv_usec;
+			x_fHtotal_sec += x_fHcvtout_stop.tv_sec - x_fHcvtin_start.tv_sec;
+			x_fHtotal_usec += x_fHcvtout_stop.tv_usec - x_fHcvtin_start.tv_usec;
+#endif // INT_TIME
+
+			// the else below corresponds to ifdef XMIT_HW_FFT
+#else
+
+			float scale = 1 / sqrt(52.0); // HPVM: Copied from do_xmit_pipeline in T6
+
+			// Do the FFT in 64-entry windows, and add the "shift" operation to each
+			//   Also add the weighting/scaling for the window
+			bool inverse = true;
+			bool shift = true;
+			bool swap_odd_signs = false; // We shift the inputs instead?
+			int size = d_fft_len;
+			int log_size = d_fft_logn;
+			float recluster[2] = {1.0, 1.0}; // used to alter sign of "odd" fft results
+			if (swap_odd_signs) {
+				recluster[1] = -1.0;
+			}
+
+#if !defined(HPVM)
+			{
+				int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
+				DO_LIMITS_ANALYSIS(float min_input = 3.0e+038; float max_input = -1.17e-038);
+				DEBUG(printf("Starting do_xmit_fft_work with size %u inverse %u shift %u on n_inputs %u\n", size, inverse, shift, n_inputs));
+			}
+#endif
+			//for (int iteration = 0; iteration < (n_inputs + (size - 1)) / size; iteration += 1) // Original for-loop
+			for (int iteration = 0; iteration < MAX_FFT_FRAMES; iteration += 1) { // TODO: IS THE TERMINATION CONDITION VALID?
+				int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
+				int k = iteration * size;
+				if (!(k > n_inputs + (size - 1))) {
+				float fft_in_real[64];
+				float fft_in_imag[64];
+
+				DEBUG(printf(" Prepping for FFT call starting at %u\n", k));
+				// Set up the (scaled) inputs
+				if (shift) {
+					FFT_DEBUG(
+							for (int i = 0; i < size / 2; i++) {
+							if ((k == 0)) { // && (i < 2))
+								printf(" IN_R %u : %f * %f = %f\n", k + i, scale, ofdm_car_str_real[k + i], scale * ofdm_car_str_real[k + i]);
+								printf(" IN_I %u : %f * %f = %f\n", k + i, scale, ofdm_car_str_imag[k + i], scale * ofdm_car_str_imag[k + i]);
+								usleep(50000);
+							}
+							});
+							for (int i = 0; i < size / 2; i++) {
+								fft_in_real[32 + i] = ofdm_car_str_real[k + i] * scale; // Copy  0 .. 31 into 32 .. 63
+								DO_LIMITS_ANALYSIS(
+										if (fft_in_real[32 + i] < min_input) {
+										min_input = fft_in_real[32 + i];
+										}
+										if (fft_in_real[32 + i] > max_input) {
+										max_input = fft_in_real[32 + i];
+										});
+								fft_in_imag[32 + i] = ofdm_car_str_imag[k + i] * scale; // Copy  0 .. 31 into 32 .. 63
+								DO_LIMITS_ANALYSIS(
+										if (fft_in_imag[32 + i] < min_input) {
+										min_input = fft_in_imag[32 + i];
+										}
+										if (fft_in_imag[32 + i] > max_input) {
+										max_input = fft_in_imag[32 + i];
+										});
+								fft_in_real[i] = ofdm_car_str_real[k + 32 + i] * scale; // Copy 32 .. 63 into  0 .. 31
+								DO_LIMITS_ANALYSIS(
+										if (fft_in_real[i] < min_input) {
+										min_input = fft_in_real[i];
+										}
+										if (fft_in_real[i] > max_input) {
+										max_input = fft_in_real[i];
+										});
+								fft_in_imag[i] = ofdm_car_str_imag[k + 32 + i] * scale; // Copy 32 .. 63 into  0 .. 31
+								DO_LIMITS_ANALYSIS(
+										if (fft_in_imag[i] < min_input) {
+										min_input = fft_in_imag[i];
+										}
+										if (fft_in_imag[i] > max_input) {
+										max_input = fft_in_imag[i];
+										});
+								DEBUG(
+										if (k == 0) {
+										printf("  set %u IN[ %2u ] = %11.8f * ( %11.8f + %11.8f i) = %11.8f + %11.8f i\n", k, 32 + i, scale, ofdm_car_str_real[k + i], ofdm_car_str_imag[k + i], fft_in_real[32 + i], fft_in_imag[32 + i]);
+										printf("  set %u IN[ %2u ] = %11.8f * ( %11.8f + %11.8f i) = %11.8f + %11.8f i\n", k, i, scale, ofdm_car_str_real[k + 32 + i], ofdm_car_str_imag[k + 32 + i], fft_in_real[i], fft_in_imag[i]);
+										});
+							}
+							FFT_DEBUG(
+									for (int i = 0; i < size / 2; i++) {
+									if ((k == 0)) { // && (i < 2))
+										printf(" SHIFTED_IN_R %u : %f\n", k + i, fft_in_real[i]);
+										printf(" SHIFTED_IN_I %u : %f\n", k + i, fft_in_imag[i]);
+										usleep(50000);
+									}
+									});
+									}
+							else {
+								for (int i = 0; i < size; i++) {
+									fft_in_real[i] = ofdm_car_str_real[k + i] * scale;
+									fft_in_imag[i] = ofdm_car_str_imag[k + i] * scale;
+									FFT_DEBUG(
+											if ((k == 0)) { // && (i < 2))
+												printf(" Set IN_R at %u to %f * %f = %f\n", k + i, scale, ofdm_car_str_real[k + i], scale * ofdm_car_str_real[k + i]);
+												printf(" Set IN_I at %u to %f * %f = %f\n", k + i, scale, ofdm_car_str_imag[k + i], scale * ofdm_car_str_imag[k + i]);
+												usleep(50000);
+											});
+											DEBUG(
+													if (k == 0) {
+													printf(" set %u IN[ %2u ] = %11.8f * ( %11.8f + %11.8f i) = %11.8f + %11.8f i\n", k, i, scale, ofdm_car_str_real[k + i], ofdm_car_str_imag[k + i], fft_in_real[i], fft_in_imag[i]);
+													});
+											}
+								}
+								DEBUG(
+										if (k < 256) {
+										printf("\n Iteration %u inputs (in order):\n", k);
+										for (int i = 0; i < size; i++) {
+										printf("  FFT_%u_IN[ %2u ] = %11.8f * ( %11.8f + %11.8f i) = %11.8f + %11.8f i\n", k, i, scale, ofdm_car_str_real[k + i], ofdm_car_str_imag[k + i], fft_in_real[i], fft_in_imag[i]);
+										}
+										printf("\nCalling FFT function with inverse = %u size = %u\n", inverse, size);
+										});
+								// NOTE: This version over-writes the input data with output data
+								fft_ri(fft_in_real, fft_in_imag, inverse, false, size, log_size); 
+
+								for (int i = 0; i < size; i++) {
+									// Swap sign on the "odd" FFT results (re-cluster energy around zero?)
+									fft_out_real[k + i] = recluster[i & 0x1] * fft_in_real[i];
+									fft_out_imag[k + i] = recluster[i & 0x1] * fft_in_imag[i];
+									FFT_DEBUG(
+											if (k == 0) {
+											printf("  OUT_R %u : rc %f : Vr %f R %f\n", k + i, recluster[i & 0x1], fft_in_real[i], fft_out_real[k + i]);
+											printf("  OUT_I %u : rc %f : Vr %f I %f\n", k + i, recluster[i & 0x1], fft_in_imag[i], fft_out_imag[k + i]);
+											usleep(50000);
+											});
+								}
+
+								DEBUG(
+										if (k < 256) {
+										for (int i = 0; i < size; i++) {
+										printf(" FFT_%u_OUT[ %2u : %5u ] = %11.8f + %11.8f i\n", k, i, k + i, fft_out_real[k + i], fft_out_imag[k + i]);
+										}
+										});
+
+								DEBUG(
+										if (k < 4) {
+										printf("\n");
+										});
+							}
+							} // for (k = 0 .. n_inputs
+#endif // end for ifdef / else XMIT_HW_FFT
+
+
+							DO_LIMITS_ANALYSIS(printf("DO_XMIT_FFT_WORK : min_input = %.15g  max_input = %.15g\n", min_input, max_input));
+							DEBUG(printf(" Done with fft calls... output:\n"));
+
+#if !defined(HPVM)
+#ifdef INT_TIME
+									gettimeofday(&x_fft_stop, NULL);
+									x_fft_sec += x_fft_stop.tv_sec - x_fft_start.tv_sec;
+									x_fft_usec += x_fft_stop.tv_usec - x_fft_start.tv_usec;
+#endif
+									DO_NUM_IOS_ANALYSIS(printf("Back from do_xmit_fft_work: OUT n_out %u\n", n_ins));
+									DEBUG(
+											for (int i = 0; i < n_ins; i++) {
+											printf(" fft_out %6u : %11.8f + %11.8f i\n", i, fft_out_real[i], fft_out_imag[i]);
+											});
+#endif
+
+#if defined(HPVM)
+									__hetero_task_end(T6);
+#endif
+
+#if defined(HPVM)
+									void * T7 = __hetero_task_begin(5, ofc_res, ofc_res_sz, fft_out_real, fft_out_real_sz,
+											fft_out_imag, fft_out_imag_sz, cycpref_out_real, cycpref_out_real_sz,
+											cycpref_out_imag, cycpref_out_imag_sz,
+											2, cycpref_out_real, cycpref_out_real_sz, cycpref_out_imag, cycpref_out_imag_sz,
+											"cyclic_prefix_task_wrapper");
+#endif
+#if defined(HPVM)
+						__hpvm__hint(DEVICE);
+#endif
+
+						//#include "gold_fft_outputs.c"
+
+#ifdef INT_TIME
+						gettimeofday(&x_ocycpref_start, NULL);
+#endif
+
+						int num_cycpref_outs = (*ofc_res) * (d_fft_len + d_cp_size) + 1;
+
+						// float cycpref_out_real[41360]; // Large enough
+						// float cycpref_out_imag[41360]; // Large enough
+
+						DEBUG(printf("\nCalling do_ofdm_cyclic_prefixer_impl_work(%u, fft_output)\n", (*ofc_res)));
+						DO_NUM_IOS_ANALYSIS(printf("Calling do_ofdm_cyclic_prefx: IN ofc_res %u : OUT n_cycp_out %u\n",
+									(*ofc_res), num_cycpref_outs));
+						//do_ofdm_cyclic_prefixer_impl_work(ofc_res, gold_fft_out_real, gold_fft_out_imag, cycpref_out_real, cycpref_out_imag);
+						/* #ifdef INT_TIME */
+						/*  gettimeofday(&x_ocycpref_start, NULL); */
+						/* #endif */
+						do_ofdm_cyclic_prefixer_impl_work(*ofc_res, fft_out_real, fft_out_imag, cycpref_out_real, cycpref_out_imag);
+						//printf("Done with do_ofdm_cyclic_prefixer_impl_work\n");
+
+#ifdef INT_TIME
+						gettimeofday(&x_ocycpref_stop, NULL);
+						x_ocycpref_sec += x_ocycpref_stop.tv_sec - x_ocycpref_start.tv_sec;
+						x_ocycpref_usec += x_ocycpref_stop.tv_usec - x_ocycpref_start.tv_usec;
+#endif
+						DEBUG(
+								for (int i = 0; i < num_cycpref_outs; i++) {
+								printf(" ocypref_out %6u : %11.8f + %11.8f i\n", i, cycpref_out_real[i], cycpref_out_imag[i]);
+								}
+								printf("\n"));
+#if false
+
+									//#include "gold_fft_outputs.c"
+
+#ifdef INT_TIME
+									gettimeofday(&x_ocycpref_start, NULL);
+#endif
+
+									int num_cycpref_outs = (*ofc_res) * (d_fft_len + d_cp_size) + 1;
+
+									// float cycpref_out_real[41360]; // Large enough
+									// float cycpref_out_imag[41360]; // Large enough
+
+									DEBUG(printf("\nCalling do_ofdm_cyclic_prefixer_impl_work(%u, fft_output)\n", (*ofc_res)));
+									DO_NUM_IOS_ANALYSIS(printf("Calling do_ofdm_cyclic_prefx: IN ofc_res %u : OUT n_cycp_out %u\n",
+												(*ofc_res), num_cycpref_outs));
+									//do_ofdm_cyclic_prefixer_impl_work(ofc_res, gold_fft_out_real, gold_fft_out_imag, cycpref_out_real, cycpref_out_imag);
+									/* #ifdef INT_TIME */
+									/*  gettimeofday(&x_ocycpref_start, NULL); */
+									/* #endif */
+									do_ofdm_cyclic_prefixer_impl_work(*ofc_res, fft_out_real, fft_out_imag, cycpref_out_real, cycpref_out_imag);
+
+#ifdef INT_TIME
+									gettimeofday(&x_ocycpref_stop, NULL);
+									x_ocycpref_sec += x_ocycpref_stop.tv_sec - x_ocycpref_start.tv_sec;
+									x_ocycpref_usec += x_ocycpref_stop.tv_usec - x_ocycpref_start.tv_usec;
+#endif
+									DEBUG(
+											for (int i = 0; i < num_cycpref_outs; i++) {
+											printf(" ocypref_out %6u : %11.8f + %11.8f i\n", i, cycpref_out_real[i], cycpref_out_imag[i]);
+											}
+											printf("\n"));
+#endif // if false
+
+#if defined(HPVM)
+									__hetero_task_end(T7);
+#endif
+
+#if defined(HPVM)
+									void * T8 = __hetero_task_begin(6, num_final_outs, num_final_outs_sz, final_out_real, final_out_real_sz,
+											final_out_imag, final_out_imag_sz, cycpref_out_real, cycpref_out_real_sz,
+											cycpref_out_imag, cycpref_out_imag_sz, ofc_res, ofc_res_sz, 3,
+											num_final_outs, num_final_outs_sz, final_out_real, final_out_real_sz,
+											final_out_imag, final_out_imag_sz, "padding_task_wrapper");
+#endif
+#if defined(HPVM)
+						__hpvm__hint(DEVICE);
+#endif
+
+
+						int num_cycpref_outs_cp = (*ofc_res) * (d_fft_len + d_cp_size) + 1; // copied from above task
+						// The next "stage" is the "packet_pad2" which adds 500 zeros to the front (and no zeros to the rear) of the output
+						//   This block may also add some time-stamp tags (for UHD?) for GnuRadio use?
+						//   Not sure we care about this padding?
+						bool do_add_pre_pad = false;
+						int num_pre_pad = do_add_pre_pad ? 500 : 0;
+						int num_post_pad = 0;
+
+						// Now set the Final Outputs
+						*num_final_outs = num_pre_pad + num_cycpref_outs_cp + num_post_pad;
+						for (int i = 0; i < num_pre_pad; i++) {
+							final_out_real[i] = 0.0;
+							final_out_imag[i] = 0.0;
+						}
+						for (int i = 0; i < num_cycpref_outs_cp; i++) {
+							int iidx = num_pre_pad + i;
+							final_out_real[iidx] = cycpref_out_real[i];
+							final_out_imag[iidx] = cycpref_out_imag[i];
+						}
+#if false
+
+									int num_cycpref_outs_cp = (*ofc_res) * (d_fft_len + d_cp_size) + 1; // copied from above task
+									// The next "stage" is the "packet_pad2" which adds 500 zeros to the front (and no zeros to the rear) of the output
+									//   This block may also add some time-stamp tags (for UHD?) for GnuRadio use?
+									//   Not sure we care about this padding?
+									bool do_add_pre_pad = false;
+									DEBUG(printf("\nAdd the pre-padding : %u\n", do_add_pre_pad));
+									int num_pre_pad = do_add_pre_pad ? 500 : 0;
+									int num_post_pad = 0;
+									DEBUG(printf("\n"));
+
+									// Now set the Final Outputs
+									DEBUG(printf("\nFinal XMIT output:\n"));
+									*num_final_outs = num_pre_pad + num_cycpref_outs_cp + num_post_pad;
+									DO_NUM_IOS_ANALYSIS(printf("Set num_finalouts to %u = pre-pad %u + %u num_cycpref_outs\n",
+												*num_final_outs, num_pre_pad, num_cycpref_outs_cp));
+									for (int i = 0; i < num_pre_pad; i++) {
+										final_out_real[i] = 0.0;
+										final_out_imag[i] = 0.0;
+										DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", i, final_out_real[i], final_out_imag[i]));
+									}
+									for (int i = 0; i < num_cycpref_outs_cp; i++) {
+										int iidx = num_pre_pad + i;
+										final_out_real[iidx] = cycpref_out_real[i];
+										final_out_imag[iidx] = cycpref_out_imag[i];
+										DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", iidx, final_out_real[iidx], final_out_imag[iidx]));
+									}
+									/* for (int i = 0; i < num_post_pad; i++) { */
+									/*   int iidx = num_pre_pad + num_cycpref_outs_cp + i; */
+									/*   final_out_real[iidx] = 0.0; */
+									/*   final_out_imag[iidx] = 0.0; */
+									/*   DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", iidx, final_out_real[iidx], final_out_imag[iidx])); */
+									/* } */
+									// These next stages do not appear to have any relationship to a physical system that we might consider accelerating.
+
+									// The next "Stage" is the "throttle" block, which does not alter the output/message (just timing?)
+
+									// Then there is the channel_model...
+
+#ifdef INT_TIME
+									// The time take by the whole function can't be measure from within the function (as doing so would
+									// mean the calls to gettimeofday must be put in tasks which would then run in parallel with the rest
+									// of the tasks in this function). The caller of this function must measure the time taken.
+									// gettimeofday(&x_pipe_stop, NULL);
+									// x_pipe_sec  += x_pipe_stop.tv_sec  - x_pipe_start.tv_sec;
+									// x_pipe_usec += x_pipe_stop.tv_usec - x_pipe_start.tv_usec;
+#endif
+
+#endif // if false
+
+#if defined(HPVM)
+									__hetero_task_end(T8);
+#endif
+
+#endif
 
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
+	__hetero_section_end(Section_Main);
+	__hetero_task_end(T_Sacrificial);
 	__hetero_section_end(Section);
 #endif
 }
