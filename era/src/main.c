@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #define HPVM
-#define HPVM_CV_ROOT
+//#define HPVM_CV_ROOT
 #define HPVM_PROCESS_LIDAR
 #define HPVM_PROCESS_LIDAR_INTERNAL
 //#define HPVM_RECV_PIPELINE
@@ -47,6 +47,7 @@
 
 #define PARALLEL_PTHREADS false
 
+//#define DEVICE CPU_TARGET
 #define ERA1
 
 
@@ -1374,7 +1375,7 @@ __attribute__ ((noinline))
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR_INTERNAL)) && true
 		void * T3_cloudToOccgrid_Task = __hetero_task_begin(3, observationVal, observations_sz, lidar_inputs, lidarin_sz,
 			AVxyzw, AVxyzw_sz, 1, observationVal, observations_sz, "updateBounds_task");
-	__hpvm__hint(DEVICE);
+	__hpvm__hint(CPU_TARGET);
 #endif
 		{
 #ifdef INT_TIME
@@ -3035,7 +3036,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR_INTERNAL)) && true
 		void * T3_cloudToOccgrid_Task = __hetero_task_begin(3, observationVal, observations_sz, lidar_inputs, lidarin_sz,
 			AVxyzw, AVxyzw_sz, 1, observationVal, observations_sz, "updateBounds_task");
-	__hpvm__hint(DEVICE);
+	__hpvm__hint(CPU_TARGET);
 #endif
 		{
 #ifdef INT_TIME
@@ -4033,8 +4034,10 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 #endif
 
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
+#if defined(COLLAPSE_NODES)
 	__hetero_section_end(Section_Main);
 	__hetero_task_end(T_CPU_Wrapper);
+#endif
 	__hetero_section_end(Section);
 #endif
 }

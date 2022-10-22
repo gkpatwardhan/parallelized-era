@@ -74,7 +74,7 @@ X. OUTPUT : <some number of complex numbers?>
 #endif
 
 #define COLLAPSE_NODES
-//#undef HPVM  // TODO: HPVM: REMOVE ME
+#undef HPVM  // TODO: HPVM: REMOVE ME
 
 #ifdef INT_TIME
 /* This is XMIT PIPE internal Timing information (gathering resources) */

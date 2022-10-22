@@ -236,7 +236,7 @@ default: FPGA_OPTFLAGS += -run-aoc
 clean :
 	if [ -f $(EXE) ]; then rm $(EXE); fi
 	if [ -f DataflowGraph.dot ]; then rm DataflowGraph.dot*; fi
-	if [ -d $(BUILD_DIR_PARENT) ]; then rm -rf $(BUILD_DIR_PARENT); fi
+	if [ -d $(BUILD_DIR) ]; then rm -rf $(BUILD_DIR); fi
 	$(RM) *.dot
 	$(RM) *.xml
 
