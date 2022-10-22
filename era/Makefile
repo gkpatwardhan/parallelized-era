@@ -13,8 +13,11 @@ OTHER_SRCS:= $(filter-out $(HPVM_SRC),$(ALL_SRCS))
 
 $(info $$OTHER_SRCS is [${OTHER_SRCS}])
 
+ifeq ($(RESTRICT),1)
+  APP_CFLAGS+= -DRESTRICT
+endif
 
-APP_CFLAGS += $(INCLUDES) -ffast-math -O1 -fno-lax-vector-conversions -fno-vectorize -fno-slp-vectorize -finline -finline-functions -DHPVM
+APP_CFLAGS += $(INCLUDES) -ffast-math -O0 -fno-lax-vector-conversions -fno-vectorize -fno-slp-vectorize -finline -finline-functions -DHPVM
 APP_CXXFLAGS += $(INCLUDES) -ffast-math -O1 -fno-lax-vector-conversions -fno-vectorize -fno-slp-vectorize -finline -finline-functions -DHPVM
 APP_LDFLAGS= $(LFLAGS)
 
@@ -267,11 +270,22 @@ endif
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/%.ll : $(SRC_DIR)/%.cpp
-	$(CXX) $(CXXFLAGS) -emit-llvm -S -o $@ $<
+# $(BUILD_DIR)/%.ll : $(SRC_DIR)/%.cpp
+# 	$(CXX) $(CXXFLAGS) -emit-llvm -S -o $@ $<
 
-$(BUILD_DIR)/%.ll : $(SRC_DIR)/%.c
-	$(CC) $(CFLAGS) -emit-llvm -S -o $@ $<
+# $(BUILD_DIR)/%.ll : $(SRC_DIR)/%.c
+# 	$(CC) $(CFLAGS) -emit-llvm -S -o $@ $<
+
+.PRECIOUS: $(BUILD_DIR)/%.ll.premem2reg
+
+$(BUILD_DIR)/%.ll.premem2reg : $(SRC_DIR)/%.cpp
+	$(CXX) -Xclang -disable-O0-optnone $(CXXFLAGS) -emit-llvm -S -o $@ $<
+
+$(BUILD_DIR)/%.ll.premem2reg : $(SRC_DIR)/%.c
+	$(CC) -Xclang -disable-O0-optnone $(CFLAGS) -emit-llvm -S -o $@ $<
+
+$(BUILD_DIR)/%.ll : $(BUILD_DIR)/%.ll.premem2reg
+	$(OPT) -mem2reg -aggressive-instcombine -gvn -instcombine --loop-rotate --indvars --licm -S -o $@ $< 
 
 $(LLVM_LINKED_HCC_INPUT) : $(SRCDIR_LLVM)
 	$(LLVM_LINK) $^ -S -o $@

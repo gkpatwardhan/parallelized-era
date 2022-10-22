@@ -2808,7 +2808,7 @@ msg_stream_imag, msg_stream_imag_sz,
 //                                                              xmit_count++;
 }
 ***********************************************************************************/
-
+#ifndef RESTRICT
 void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * lidar_inputs)*/,
 	Observation * observationVal /* observations[*next_obs_cp] -> from global array*/, size_t observations_sz /*=sizeof(Observation)*2*/,
 	int * n_cmp_bytes /*return by arg*/, size_t n_cmp_bytes_sz /*=sizeof(int)*1*/,
@@ -2860,6 +2860,59 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 	crc* crcTable, size_t crcTable_sz
 	// End of arguments to encode_occgrid (called indirectly by lidar_root)
 ) {
+#else
+void lidar_root(lidar_inputs_t * __restrict lidar_inputs, size_t lidarin_sz /*=sizeof( * lidar_inputs)*/,
+	Observation * __restrict observationVal /* observations[*next_obs_cp] -> from global array*/, size_t observations_sz /*=sizeof(Observation)*2*/,
+	int * __restrict n_cmp_bytes /*return by arg*/, size_t n_cmp_bytes_sz /*=sizeof(int)*1*/,
+	unsigned char * __restrict cmp_data /*return by arg*/, size_t cmp_data_sz /*=MAX_COMPRESSED_DATA_SIZE*/,
+	// Start of global variables used internally by function
+	int * __restrict curr_obs_cp /*=curr_obs -> global*/, size_t curr_obs_cp_sz /*=sizeof(int)*/,
+	int * __restrict next_obs_cp /*=next_obs -> global*/, size_t next_obs_cp_sz /*=sizeof(int)*/,
+	int * __restrict lmap_count_cp /*=lmap_count -> global*/, size_t lmap_count_cp_sz /*=sizeof(unsigned)*/,
+	// End of global variables used internally by function
+	// Start of arguments to cloudToOccgrid (called indirectly by lidar_root)
+	double * __restrict AVxyzw, size_t AVxyzw_sz /*=sizeof(double)*/,
+	bool * __restrict rolling_window, size_t rolling_window_sz /*=sizeof(bool)*/,
+	double * __restrict min_obstacle_height, size_t min_obstacle_height_sz /*=sizeof(double)*/,
+	double * __restrict max_obstacle_height, size_t max_obstacle_height_sz /*=sizeof(double)*/,
+	double * __restrict raytrace_range, size_t raytrace_range_sz /*=sizeof(double)*/,
+	unsigned int * __restrict size_x, size_t size_x_sz /*=sizeof(unsigned int)*/,
+	unsigned int * __restrict size_y, size_t size_y_sz /*=sizeof(unsigned int)*/,
+	unsigned int * __restrict resolution, size_t resolution_sz /*=sizeof(unsigned int)*/,
+	int * __restrict timer_sequentialize, size_t timer_sequentialize_sz /*=sizeof(int) */,
+	// End of arguments to cloudToOccgrid (called indirectly by lidar_root)
+	// Start of arguments to encode_occgrid (called indirectly by lidar_root)
+	int * __restrict n_xmit_out, size_t n_xmit_out_sz,
+	float * __restrict xmit_out_real, size_t xmit_out_real_sz,
+	float * __restrict xmit_out_imag, size_t xmit_out_imag_sz,
+	int * __restrict psdu_len, size_t psdu_len_sz,
+	uint8_t * __restrict pckt_hdr_out, size_t pckt_hdr_out_sz,
+	int * __restrict pckt_hdr_len, size_t pckt_hdr_len_sz,
+	float * __restrict msg_stream_real, size_t msg_stream_real_sz,
+	float * __restrict msg_stream_imag, size_t msg_stream_imag_sz,
+	float * __restrict ofdm_car_str_real, size_t ofdm_car_str_real_sz,
+	float * __restrict ofdm_car_str_imag, size_t ofdm_car_str_imag_sz,
+	int * __restrict ofc_res, size_t ofc_res_sz,
+	float * __restrict fft_out_real, size_t fft_out_real_sz,
+	float * __restrict fft_out_imag, size_t fft_out_imag_sz,
+	float * __restrict cycpref_out_real, size_t cycpref_out_real_sz,
+	float * __restrict cycpref_out_imag, size_t cycpref_out_imag_sz,
+	int* __restrict d_occupied_carriers, size_t d_occupied_carriers_sz,
+	// the following are inputs and outputs because they are used to maintain state in the program
+	uint8_t * __restrict d_psdu_arg, size_t d_psdu_arg_sz,
+	uint8_t * __restrict d_map_out_copy_arg, size_t d_map_out_copy_arg_sz,
+	uint16_t * __restrict d_seq_nr, size_t d_seq_nr_sz/*=sizeof(uint16_t)*/,
+        uint8_t * __restrict d_scrambler, size_t d_scrambler_sz,
+        char* __restrict d_symbols, size_t d_symbols_sz,
+        int* __restrict d_symbols_offset, size_t d_symbols_offset_sz,
+        int* __restrict d_symbols_len, size_t d_symbols_len_sz,
+	ofdm_param * __restrict d_ofdm, size_t d_ofdm_sz,
+        frame_param * __restrict d_frame, size_t d_frame_sz,
+	int* __restrict d_pilot_carriers, size_t d_pilot_carriers_sz,
+	crc* __restrict crcTable, size_t crcTable_sz
+	// End of arguments to encode_occgrid (called indirectly by lidar_root)
+) {
+#endif
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR)) && true
 	void * Section = __hetero_section_begin();
 #endif
