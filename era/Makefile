@@ -13,11 +13,13 @@ OTHER_SRCS:= $(filter-out $(HPVM_SRC),$(ALL_SRCS))
 
 $(info $$OTHER_SRCS is [${OTHER_SRCS}])
 
-ifeq ($(RESTRICT),1)
-  APP_CFLAGS+= -DRESTRICT
+ifeq ($(ERA1),1)
+  APP_CFLAGS+= -DERA1
+  RESTRICT_CFLAGS+= -DERA1
 endif
 
-APP_CFLAGS += $(INCLUDES) -ffast-math -O0 -fno-lax-vector-conversions -fno-vectorize -fno-slp-vectorize -finline -finline-functions -DHPVM
+RESTRICT_CFLAGS += -DRESTRICT $(INCLUDES) -ffast-math -O0 -fno-lax-vector-conversions -fno-vectorize -fno-slp-vectorize -finline -finline-functions -DHPVM
+APP_CFLAGS += $(INCLUDES) -ffast-math -O1 -fno-lax-vector-conversions -fno-vectorize -fno-slp-vectorize -finline -finline-functions -DHPVM
 APP_CXXFLAGS += $(INCLUDES) -ffast-math -O1 -fno-lax-vector-conversions -fno-vectorize -fno-slp-vectorize -finline -finline-functions -DHPVM
 APP_LDFLAGS= $(LFLAGS)
 
@@ -176,6 +178,7 @@ endif
 CURRENT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 CFLAGS = $(APP_CFLAGS) $(PLATFORM_CFLAGS)
+RESTRICT_CFLAGS += $(PLATFORM_CFLAGS)
 CXXFLAGS = $(APP_CXXFLAGS) $(PLATFORM_CXXFLAGS)
 LDFLAGS= $(APP_LDFLAGS) $(PLATFORM_LDFLAGS)
 
@@ -219,7 +222,11 @@ else ifeq ($(TARGET),fpga)
   endif
 endif
 
-EXE = ERAhpvm_$(TARGET)
+ifeq ($(ERA1),1)
+  EXE = ERAhpvm_$(TARGET)_era1
+else
+  EXE = ERAhpvm_$(TARGET)_era2
+endif
 HOST_LINKED = $(BUILD_DIR)/$(EXE).linked.ll
 LLVM_LINKED_HCC_INPUT = $(BUILD_DIR)/hpvm_task.ll
 
@@ -270,22 +277,21 @@ endif
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# $(BUILD_DIR)/%.ll : $(SRC_DIR)/%.cpp
-# 	$(CXX) $(CXXFLAGS) -emit-llvm -S -o $@ $<
 
-# $(BUILD_DIR)/%.ll : $(SRC_DIR)/%.c
-# 	$(CC) $(CFLAGS) -emit-llvm -S -o $@ $<
+$(BUILD_DIR)/%.ll : $(SRC_DIR)/%.cpp
+	$(CXX) $(CXXFLAGS) -emit-llvm -S -o $@ $<
 
-.PRECIOUS: $(BUILD_DIR)/%.ll.premem2reg
+$(BUILD_DIR)/%.ll : $(SRC_DIR)/%.c
+	$(CC) $(CFLAGS) -emit-llvm -S -o $@ $<
+ifeq ($(RESTRICT),1)
+.PRECIOUS: $(BUILD_DIR)/main.ll.premem2reg
 
-$(BUILD_DIR)/%.ll.premem2reg : $(SRC_DIR)/%.cpp
-	$(CXX) -Xclang -disable-O0-optnone $(CXXFLAGS) -emit-llvm -S -o $@ $<
+$(BUILD_DIR)/main.ll.premem2reg : $(SRC_DIR)/main.c
+	$(CC) -Xclang -disable-O0-optnone $(RESTRICT_CFLAGS) -emit-llvm -S -o $@ $<
 
-$(BUILD_DIR)/%.ll.premem2reg : $(SRC_DIR)/%.c
-	$(CC) -Xclang -disable-O0-optnone $(CFLAGS) -emit-llvm -S -o $@ $<
-
-$(BUILD_DIR)/%.ll : $(BUILD_DIR)/%.ll.premem2reg
+$(BUILD_DIR)/main.ll : $(BUILD_DIR)/main.ll.premem2reg
 	$(OPT) -mem2reg -aggressive-instcombine -gvn -instcombine --loop-rotate --indvars --licm -S -o $@ $< 
+endif
 
 $(LLVM_LINKED_HCC_INPUT) : $(SRCDIR_LLVM)
 	$(LLVM_LINK) $^ -S -o $@

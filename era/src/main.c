@@ -11,6 +11,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+
+#ifdef ERA1
 #define HPVM
 //#define HPVM_CV_ROOT
 #define HPVM_PROCESS_LIDAR
@@ -18,6 +20,18 @@
 //#define HPVM_RECV_PIPELINE
 //#define RECV_CALLER
 #define COLLAPSE_NODES
+//#define DEVICE CPU_TARGET
+#else
+#define ERA2
+#define HPVM
+#define HPVM_CV_ROOT
+//#define HPVM_PROCESS_LIDAR
+//#define HPVM_PROCESS_LIDAR_INTERNAL
+//#define HPVM_RECV_PIPELINE
+//#define RECV_CALLER
+//#define COLLAPSE_NODES
+#define DEVICE CPU_TARGET
+#endif
 
 #include "globals.h"
 #include "debug.h"
@@ -47,8 +61,6 @@
 
 #define PARALLEL_PTHREADS false
 
-//#define DEVICE CPU_TARGET
-#define ERA1
 
 
 #ifdef ERA1
@@ -766,6 +778,8 @@ void fuse_maps(int n_recvd_in,
 #if !(defined(HPVM) && defined(HPVM_RECV_PIPELINE))
 	DBGOUT(printf("Calling do_recv_pipeline...\n"));
 #endif
+	printf("Calling do_recv_pipeline...\n");
+
 	// Fake this with a "loopback" of the xmit message...
 
 #if defined(INT_TIME) && !(defined(HPVM) ||  defined(HPVM_RECV_PIPELINE))
@@ -1040,7 +1054,7 @@ void * receive_and_fuse_maps_impl(Observation * observations /*=observations -> 
 
         		unsigned num_fft_outs_rcv_fft = 0; size_t num_fft_outs_rcv_fft_sz = sizeof(unsigned);
 
-			printf("%s %d Calling fuse_maps", __FILE__, __LINE__);
+			printf("%s %d Calling fuse_maps\n", __FILE__, __LINE__);
 
 #if (defined(HPVM) && defined(HPVM_RECV_PIPELINE)) && true
 			// 41 inputs, 7 outputs
@@ -1168,7 +1182,7 @@ void * receive_and_fuse_maps_impl(Observation * observations /*=observations -> 
 				// End variables used by do_recv_pipeline
 				);
 #endif
-			printf("%s %d Out of fuse_maps", __FILE__, __LINE__);
+			printf("%s %d Out of fuse_maps\n", __FILE__, __LINE__);
 
 			// This is now the fused map that should be sent to the AV(Car)
 			//  The n values of the (fused) local_map Costmap
@@ -4635,12 +4649,12 @@ int main(int argc, char * argv[]) {
 			printf("n_xmit_out: %d\n", n_xmit_out);
 			printf("xmit_out_real:");
 		       	for(int i = 0; i < MAX_XMIT_OUTPUTS; ++i){
-				printf("%f", xmit_out_real[i]);
+				//printf("%f", xmit_out_real[i]);
 			} 
 			printf("\n");
 			printf("xmit_out_imag:");
 		       	for(int i = 0; i < MAX_XMIT_OUTPUTS; ++i){
-				printf("%f", xmit_out_imag[i]);
+				//printf("%f", xmit_out_imag[i]);
 			}
 			printf("\n");
 

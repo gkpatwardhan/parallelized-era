@@ -73,8 +73,11 @@ X. OUTPUT : <some number of complex numbers?>
 #include "hetero.h"
 #endif
 
+#ifdef ERA1
 #define COLLAPSE_NODES
+#else
 #undef HPVM  // TODO: HPVM: REMOVE ME
+#endif
 
 #ifdef INT_TIME
 /* This is XMIT PIPE internal Timing information (gathering resources) */
