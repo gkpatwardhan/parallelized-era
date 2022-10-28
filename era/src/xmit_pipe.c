@@ -238,17 +238,22 @@ void interleave(const char * in, char * out, int in_sym, /*frame_param* frame,*/
 	int first[860];
 	int second[860];
 	int s = (( /*ofdm.*/ in_bpsc / 2) > 1) ? ( /*ofdm.*/ in_bpsc / 2) : 1;
+//	printf("ERA FOR: interleave for loop iteartion: n_cbps=%d, in_sym=%d\n", n_cbps, in_sym);
 
+	// HPVM: It seems n_cbps is always equal to 48, so we can put in a non-zero loop marker here
 	for (int j = 0; j < n_cbps; j++) {
+//		__hpvm__isNonZeroLoop(j, 48);
 		first[j] = s * (j / s) + ((j + (int) (floor(16.0 * j / n_cbps))) % s);
 	}
 
 	for (int i = 0; i < n_cbps; i++) {
+//		__hpvm__isNonZeroLoop(i, 48);
 		second[i] = 16 * i - (n_cbps - 1) * (int) (floor(16.0 * i / n_cbps));
 	}
 
 	for (int i = 0; i < /*frame.*/ in_sym; i++) {
 		for (int k = 0; k < n_cbps; k++) {
+//			__hpvm__isNonZeroLoop(k, 48);
 			if (reverse) {
 				out[i * n_cbps + second[first[k]]] = in[i * n_cbps + k];
 			}
@@ -379,11 +384,9 @@ void generate_mac_data_frame(const char * msdu, int msdu_size, int * psdu_size, 
 	//memcpy(d_psdu, &header, 24);
 	//copy msdu into psdu
 	//memcpy(d_psdu + 24, msdu, msdu_size);
-	//printf("Msdu_size: %d \n", msdu_size);
-	//printf("d_psdu: %p\n", d_psdu);
+	//printf("ERA FOR: (line %d, file %s) Msdu_size: %d \n", __LINE__, __FILE__, msdu_size);
 	for (int i = 0; i < msdu_size; i++) {
-	//	printf("msdu[%d] = %d\n", i,  msdu[i]);
-	//	printf("d_psdu[%d] = %d\n", i+24, d_psdu[i + 24]);
+//		__hpvm__noUnroll(i);
 		d_psdu[i + 24] = msdu[i];
 	}
 	//printf("Updated d_psdu\n");
@@ -501,6 +504,7 @@ int do_mapper_work(int psdu_length, uint8_t * d_psdu, size_t d_psdu_size, uint8_
 		for (int i = 0; i < 16; i++) {
 			data_bits[i] = 0;
 		}
+//		printf("ERA FOR: (line %d file %s) d_frame->psdu_size = %d\n", __LINE__, __FILE__, d_frame->psdu_size);
 		for (int i = 0; i < d_frame->psdu_size; i++) {
 			for (int b = 0; b < 8; b++) {
 				data_bits[16 + i * 8 + b] = !!(d_psdu[i] & (1 << b));
@@ -536,6 +540,7 @@ int do_mapper_work(int psdu_length, uint8_t * d_psdu, size_t d_psdu_size, uint8_
 		int state = (*d_scrambler)++; // initial_state;
 		int feedback;
 
+//		printf("ERA FOR: (line %d file %s) d_frame->n_data_bits = %d\n", __LINE__, __FILE__, d_frame->n_data_bits);
 		for (int i = 0; i < d_frame->n_data_bits; i++) {
 			feedback = (!!(state & 64)) ^ (!!(state & 8));
 			scrambled_data[i] = feedback ^ data_bits[i];
@@ -713,8 +718,10 @@ xdmw_intlv_usec += xdmw_intlv_stop.tv_usec - xdmw_punct_stop.tv_usec;
 {
 	int n_symbols = d_frame->n_sym * 48;
 	int idx = 0;
+//	printf("ERA FOR: (line %d file %s) n_symbols = %d\n", __LINE__, __FILE__, n_symbols);
 	for (int i = 0; i < n_symbols; i++) {
 		symbols[i] = 0;
+//		printf("ERA FOR: (line %d file %s) d_ofdm->n_bpsc = %d\n", __LINE__, __FILE__, d_ofdm->n_bpsc);
 		for (int k = 0; k < d_ofdm->n_bpsc; k++) {
 			// assert(interleaved_data[idx] == 1 || interleaved_data[idx] == 0); // HPVM: can't have asserts on fpga
 			symbols[i] |= (interleaved_data[idx] << k);
@@ -730,6 +737,7 @@ xdmw_intlv_usec += xdmw_intlv_stop.tv_usec - xdmw_punct_stop.tv_usec;
 
 //printf("Assigning d_symbols\n");
 int termination = *d_symbols_len;
+//printf("ERA FOR: (line %d file %s) termination  = %d\n", __LINE__, __FILE__, termination);
 for (int di = 0; di < termination; di++) {
 	//printf("symbols[%d] = %d\n", di, symbols[di]);
 	//printf("d_symbols[%d] = %d\n", di, d_symbols[di]);
@@ -760,6 +768,7 @@ xdmw_symbls_usec += xdmw_symbls_stop.tv_usec - xdmw_intlv_stop.tv_usec;
 
 int i = *d_symbols_len - *d_symbols_offset;
 //printf("output i = %u :  d_sym = %p and d_sym_off = %u\n", i, (void *) d_symbols, *d_symbols_offset);
+//printf("ERA FOR: (line %d file %s) i  = %d\n", __LINE__, __FILE__, i);
 for (int di = 0; di < i; di++) {
 	d_map_out[di] = d_symbols[*d_symbols_offset + di];
 	DEBUG(
@@ -872,6 +881,8 @@ void init_d_scramble_mask(uint32_t mask, uint32_t seed, uint32_t reg_len) {
 		 *      Perform one cycle of the LFSR.  The output bit is taken from the shift register LSB.
 		 *          The shift register MSB is assigned from the modulo 2 sum of the masked shift register.
 		 */
+//		printf("ERA FOR: (line %d file %s) d_header_len  = %d\n", __LINE__, __FILE__, d_header_len);
+//		printf("ERA FOR: (line %d file %s) bits_per_header_sym  = %d\n", __LINE__, __FILE__, bits_per_header_sym);
 		for (int i = 0; i < d_header_len; i++) {
 			for (int k = 0; k < bits_per_header_sym; k++) {
 				unsigned char next_bit;
@@ -3280,6 +3291,7 @@ const float d_sync_words_real[d_num_sync_words][d_size_sync_words] = {
 	// Reset the contents of the output_items to 0x00 (so any not over-written remain 0x00?)
 	//memset((void *) out_real, 0x00, sizeof(float) * d_fft_len * noutput_items);
 	//memset((void *) out_imag, 0x00, sizeof(float) * d_fft_len * noutput_items);
+//	printf("ERA FOR (line %d file %s) term: %d\n", __LINE__, __FILE__, (d_fft_len * (noutput_items + d_num_sync_words)));
 	for (int ti = 0; ti < d_fft_len * (noutput_items + d_num_sync_words); ti++) {
 		out_real[ti] = 0.0;
 		out_imag[ti] = 0.0;
@@ -3288,6 +3300,8 @@ const float d_sync_words_real[d_num_sync_words][d_size_sync_words] = {
 	// Copy Sync word
 	//printf("\nCopy sync words...\n");
 	int o_offset = 0;
+//	printf("ERA FOR (line %d file %s) d_num_sync_words: %d\n", __LINE__, __FILE__, d_num_sync_words);
+//	printf("ERA FOR (line %d file %s) d_fft_len: %d\n", __LINE__, __FILE__, d_fft_len);
 	for (unsigned i = 0; i < d_num_sync_words; i++) {
 		//memcpy((void *) out, (void *) &d_sync_words[i][0], sizeof(gr_complex) * d_fft_len);
 		int oidx = o_offset;
@@ -3309,6 +3323,7 @@ const float d_sync_words_real[d_num_sync_words][d_size_sync_words] = {
 	int symbols_to_allocate = d_size_occupied_carriers;
 	int symbols_allocated = 0;
 	//printf("\nCopy data symbols -- symbols_to_allocate = %u\n", symbols_to_allocate);
+//	printf("ERA FOR (line %d file %s) ninput_items: %d\n", __LINE__, __FILE__, ninput_items);
 	for (int i = 0; i < ninput_items; i++) {
 		if (symbols_allocated == 0) {
 			/*   // Copy all tags associated with these input symbols onto this OFDM symbol */
@@ -3346,6 +3361,7 @@ const float d_sync_words_real[d_num_sync_words][d_size_sync_words] = {
 
 	//printf("\nCopy pilot symbols: n_ofdm_symbols = %lu\n", n_ofdm_symbols);
 	// Copy pilot symbols
+//	printf("ERA FOR (line %d file %s) n_ofdm_symbols: %d\n", __LINE__, __FILE__, n_ofdm_symbols);
 	for (int i = 0; i < n_ofdm_symbols; i++) {
 		for (unsigned k = 0; k < d_size_pilot_carriers[i % d_num_pilot_carriers]; k++) {
 			int pcidx = i % d_num_pilot_carriers;
@@ -3378,6 +3394,7 @@ do_ofdm_cyclic_prefixer_impl_work(int n_symbols, const float * in_real, const fl
 
 	// The actual flanks are one sample shorter than d_rolloff_len, because the
 	// first sample of the up- and down flank is always zero and one, respectively
+//	printf("ERA FOR (line %d file %s) d_rolloff_len: %d\n", __LINE__, __FILE__, d_rolloff_len);
 	for (int i = 1; i < d_rolloff_len; i++) {
 		d_up_flank[i - 1] = 0.5 * (1 + cos(M_PI * i / d_rolloff_len - M_PI));
 		d_down_flank[i - 1] = 0.5 * (1 + cos(M_PI * (d_rolloff_len - i) / d_rolloff_len - M_PI));
@@ -3388,17 +3405,21 @@ do_ofdm_cyclic_prefixer_impl_work(int n_symbols, const float * in_real, const fl
 	// 2) Do the cyclic prefixing and, optionally, the pulse shaping
 	int out_offset = 0;
 	int in_offset = 0;
+//	printf("ERA FOR (line %d file %s) symbols_to_read: %d\n", __LINE__, __FILE__, symbols_to_read);
 	for (int sym_idx = 0; sym_idx < symbols_to_read; sym_idx++) {
 		//memcpy((void *)(out + d_cp_size), (void *) in, d_fft_len * sizeof(gr_complex));
+//		printf("ERA FOR (line %d file %s) d_fft_len: %d\n", __LINE__, __FILE__, d_fft_len);
 		for (int i = 0; i < d_fft_len; i++) {
 			out_real[out_offset + i + d_cp_size] = in_real[in_offset + i];
 			out_imag[out_offset + i + d_cp_size] = in_imag[in_offset + i];
 		}
 		//memcpy((void *) out, (void *) (in + d_fft_len - d_cp_size), d_cp_size * sizeof(gr_complex));
+//		printf("ERA FOR (line %d file %s) d_cp_size: %d\n", __LINE__, __FILE__, d_cp_size);
 		for (int i = 0; i < d_cp_size; i++) {
 			out_real[out_offset + i] = in_real[in_offset + i + d_fft_len - d_cp_size];
 			out_imag[out_offset + i] = in_imag[in_offset + i + d_fft_len - d_cp_size];
 		}
+//		printf("ERA FOR (line %d file %s) d_rolloff_len: %d\n", __LINE__, __FILE__, d_rolloff_len);
 		for (int i = 0; i < d_rolloff_len - 1; i++) {
 			out_real[out_offset + i] = out_real[out_offset + i] * d_up_flank[i] + d_delay_line_real[i];
 			out_imag[out_offset + i] = out_imag[out_offset + i] * d_up_flank[i] + d_delay_line_imag[i];
@@ -3411,6 +3432,7 @@ do_ofdm_cyclic_prefixer_impl_work(int n_symbols, const float * in_real, const fl
 
 	// 3) If we're in packet mode: (we are)
 	//    - flush the delay line, if applicable
+//	printf("ERA FOR (line %d file %s) d_rolloff_len: %d\n", __LINE__, __FILE__, d_rolloff_len);
 	for (unsigned i = 0; i < (d_rolloff_len - 1); i++) {
 		out_real[out_offset + i] = d_delay_line_real[i];
 		out_imag[out_offset + i] = d_delay_line_imag[i];
@@ -3633,6 +3655,8 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 		// We also SCALE it here (but we should be able to do that in the HWR Accel later)
 		{ // scope for jidx
 			int jidx = 0;
+//			printf("ERA FOR: (line %d, file %s) term: %d\n", __LINE__, __FILE__, (n_inputs + (size - 1)));	
+//			printf("ERA FOR: (line %d, file %s) size: %d\n", __LINE__, __FILE__, size);
 			for (int k = 0; k < (n_inputs + (size - 1)); k += size) {
 				for (int i = 0; i < size; i++) {
 					xmit_fftHW_li_mem[fn][jidx++] = float2fx(input_real[k + i] * scale, FX_IL); // NOTE: when we enable scale is HW remove it from here.
@@ -3672,6 +3696,8 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #endif // INT_TIME
 			{ // scope for jidx
 				int jidx = 0;
+//				printf("ERA FOR: (line %d, file %s) term: %d\n", __LINE__, __FILE__, (n_inputs + (size - 1)));
+//				printf("ERA FOR: (line %d, file %s) size: %d\n", __LINE__, __FILE__, size);
 				for (int k = 0; k < (n_inputs + (size - 1)); k += size) {
 					for (int i = 0; i < size; i++) {
 						//output_real[k + i] = recluster[i&0x1]*(float)fx2float(xmit_fftHW_lmem[fn][jidx++], FX_IL);
@@ -3812,6 +3838,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 									});
 									}
 							else {
+//								printf("ERA FOR: (line %d, file %s) size: %d\n", __LINE__, __FILE__, size);
 								for (int i = 0; i < size; i++) {
 									fft_in_real[i] = input_real[k + i] * scale;
 									fft_in_imag[i] = input_imag[k + i] * scale;
@@ -3841,6 +3868,7 @@ __attribute__ ((noinline)) void do_xmit_fft_work(int* ofc_res, size_t ofc_res_sz
 #endif
 								fft_ri(fft_in_real, fft_in_imag, inverse, false, size, log_size); 
 
+//								printf("ERA FOR: (line %d, file %s) size: %d\n", __LINE__, __FILE__, size);
 								for (int i = 0; i < size; i++) {
 									// Swap sign on the "odd" FFT results (re-cluster energy around zero?)
 									output_real[k + i] = recluster[i & 0x1] * fft_in_real[i];

@@ -4,16 +4,11 @@
 #include <stdint.h>
 #include <sys/time.h>
 
-#undef HPVM
-
 #include "globals.h"
 #include "occgrid.h"
 
-
-#if defined(HPVM)
 #include "hpvm.h"
 #include "hetero.h"
-#endif
 
 #ifdef INT_TIME
 /* This is OCC-GRID Internal Timing information (gathering resources) */
@@ -90,11 +85,6 @@ void raytraceLine(Observation* obs_ptr, unsigned int x0, unsigned int y0, unsign
 
 void addStaticObstacle(unsigned char* obstacle_type);
 
-void initCostmap(Observation* obs_ptr, bool rolling_window,
-		double min_obstacle_height, double max_obstacle_height, double raytrace_range,
-		unsigned int size_x, unsigned int size_y, double resolution,
-		/*unsigned char default_value,*/
-		double robot_x, double robot_y, double robot_z);
 
 		//Define global variables
 		//Observation master_observation;
@@ -209,34 +199,73 @@ void addStaticObstacle(Observation* obs_ptr, unsigned char* obstacle_type) {
 }
 #endif
 
-void initCostmap(Observation* obs_ptr, bool rolling_window, double min_obstacle_height, double max_obstacle_height,
-		double raytrace_range, unsigned int x_dim, unsigned int y_dim, double resolution,
+void initCostmap(Observation* observationVal, bool* rolling_window, double* min_obstacle_height, double* max_obstacle_height,
+		double* raytrace_range, unsigned int *size_x, unsigned int* size_y, double *resolution,
 		/*unsigned char default_value,*/ double robot_x, double robot_y, double robot_z) {
 
-	obs_ptr->rolling_window = rolling_window; //TODO:
-	obs_ptr->min_obstacle_height = min_obstacle_height; //TODO:
-	obs_ptr->max_obstacle_height = max_obstacle_height; //TODO:
-	obs_ptr->raytrace_range = raytrace_range; //TODO:
+	unsigned int x_dim = *size_x;
+	unsigned int y_dim = *size_y;
+	size_t terminationCondition;
 
-	obs_ptr->master_costmap.cell_size = resolution;
-	obs_ptr->master_costmap.x_dim = x_dim;
-	obs_ptr->master_costmap.y_dim = y_dim;
-	obs_ptr->master_costmap.default_value = CMV_NO_INFORMATION; // default_value;
+       observationVal->rolling_window = *rolling_window; //TODO:
+      observationVal->min_obstacle_height = *min_obstacle_height; //TODO:
+      observationVal->max_obstacle_height = *max_obstacle_height; //TODO:
+      observationVal->raytrace_range = *raytrace_range; //TODO:
 
-	obs_ptr->master_costmap.av_x = robot_x;
-	obs_ptr->master_costmap.av_y = robot_y;
-	obs_ptr->master_costmap.av_z = robot_z;
+      observationVal->master_costmap.cell_size = *resolution;
+      observationVal->master_costmap.x_dim = x_dim;
+      observationVal->master_costmap.y_dim = y_dim;
+      observationVal->master_costmap.default_value = CMV_NO_INFORMATION; // default_value;
 
-	obs_ptr->master_resolution = resolution;
+      observationVal->master_costmap.av_x = robot_x;
+      observationVal->master_costmap.av_y = robot_y;
+      observationVal->master_costmap.av_z = robot_z;
 
-	obs_ptr->master_origin.x = robot_x - (x_dim - 1) / 2;
-	obs_ptr->master_origin.y = robot_y - (y_dim - 1) / 2;
-	obs_ptr->master_origin.z = robot_z;
+      observationVal->master_resolution = *resolution;
 
-	int terminationCondition =  obs_ptr->master_costmap.x_dim * obs_ptr->master_costmap.y_dim / (obs_ptr->master_resolution * obs_ptr->master_resolution);
-//	memset(obs_ptr->master_costmap.costmap, CMV_NO_INFORMATION, terminationCondition);
-	for (int i = 0; i < terminationCondition; ++i) {
-		obs_ptr->master_costmap.costmap[i] = CMV_NO_INFORMATION; // obs_ptr->master_costmap.default_value;
+      observationVal->master_origin.x = robot_x - (x_dim - 1) / 2;
+      observationVal->master_origin.y = robot_y - (y_dim - 1) / 2;
+      observationVal->master_origin.z = robot_z;
+
+      terminationCondition = x_dim * y_dim;
+      terminationCondition = terminationCondition / ((*resolution) * (*resolution));
+
+      // x_dim = GRID_MAP_X_DIM = 100
+      // y_dim = GRID_MAP_Y_DIM = 100
+      // resolution = GRID_MAP_RESLTN = 2
+      for (size_t i = 0; i < terminationCondition; ++i) {
+//        __hpvm__isNonZeroLoop(i, 2500);
+        observationVal->master_costmap.costmap[i] = CMV_NO_INFORMATION;
+      }
+
+	observationVal->rolling_window = *rolling_window; //TODO:
+	observationVal->min_obstacle_height = *min_obstacle_height; //TODO:
+	observationVal->max_obstacle_height = *max_obstacle_height; //TODO:
+	observationVal->raytrace_range = *raytrace_range; //TODO:
+
+	observationVal->master_costmap.cell_size = *resolution;
+	observationVal->master_costmap.x_dim = x_dim;
+	observationVal->master_costmap.y_dim = y_dim;
+	observationVal->master_costmap.default_value = CMV_NO_INFORMATION; // default_value;
+
+	observationVal->master_costmap.av_x = robot_x;
+	observationVal->master_costmap.av_y = robot_y;
+	observationVal->master_costmap.av_z = robot_z;
+
+	observationVal->master_resolution = *resolution;
+
+	observationVal->master_origin.x = robot_x - (x_dim - 1) / 2;
+	observationVal->master_origin.y = robot_y - (y_dim - 1) / 2;
+	observationVal->master_origin.z = robot_z;
+
+	terminationCondition = x_dim * y_dim;
+        terminationCondition = terminationCondition / ((*resolution) * (*resolution));
+
+	// x_dim = GRID_MAP_X_DIM = 100
+	// y_dim = GRID_MAP_Y_DIM = 100
+	// master_resolution = GRID_MAP_RESLTN = 2
+	for (size_t i = 0; i < terminationCondition; ++i) {
+		observationVal->master_costmap.costmap[i] = CMV_NO_INFORMATION; // obs_ptr->master_costmap.default_value;
 	}
 
 }
@@ -441,6 +470,7 @@ updateBounds(obs_ptr, data, data_size, robot_x, robot_y, robot_z, robot_yaw, &mi
 }*/
 
 
+#if false
 void cloudToOccgrid(Observation * obs_ptr, size_t obs_ptr_sz,
 		lidar_inputs_t* lidar_inputs, size_t lidar_inputs_sz /*=sizeof(*lidar_inputs*/,
 		double* robot_yaw, size_t robot_yaw_sz /*=sizeof(double)*/,
@@ -581,6 +611,7 @@ void cloudToOccgrid(Observation * obs_ptr, size_t obs_ptr_sz,
 		__hetero_section_end(Section);
 #endif
 }
+#endif
 
 void updateOrigin(Observation* obs_ptr, double new_origin_x, double new_origin_y) {
 	//printf("\nUpdating Map Origin\n");

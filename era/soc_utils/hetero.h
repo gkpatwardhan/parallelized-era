@@ -13,7 +13,8 @@ extern "C" {
     extern void * __hpvm_launch_begin(unsigned, ...);
     extern void __hpvm_launch_end(void *);
     extern void __hpvm_priv(unsigned, ...);
-    extern void __hpvm__isNonZeroLoop(long, ...);
+    extern void __hpvm__isNonZeroLoop(size_t, int);
+    extern void __hpvm__noUnroll(size_t); 
     extern void __hpvm__init();
     extern void __hpvm__cleanup();
 

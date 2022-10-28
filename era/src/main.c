@@ -47,8 +47,9 @@
 
 #define PARALLEL_PTHREADS false
 
-#define ERA1
+#define ERA2
 
+#define DEVICE CPU_TARGET
 
 #ifdef ERA1
 char * IMAGE_FN = "gridimage_era1_";
@@ -1311,7 +1312,7 @@ __attribute__ ((noinline))
 			timer_sequentialize, timer_sequentialize_sz,
 			2, observationVal, observations_sz, timer_sequentialize, timer_sequentialize_sz,
 			"initCostmap_task");
-	__hpvm__hint(DEVICE); 
+	__hpvm__hint(FPGA_TARGET); 
 #endif
 		{
 			*timer_sequentialize = 1;
@@ -1374,7 +1375,7 @@ __attribute__ ((noinline))
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR_INTERNAL)) && true
 		void * T3_cloudToOccgrid_Task = __hetero_task_begin(3, observationVal, observations_sz, lidar_inputs, lidarin_sz,
 			AVxyzw, AVxyzw_sz, 1, observationVal, observations_sz, "updateBounds_task");
-	__hpvm__hint(DEVICE);
+//	__hpvm__hint(DEVICE);
 #endif
 		{
 #ifdef INT_TIME
@@ -2972,20 +2973,58 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 			timer_sequentialize, timer_sequentialize_sz,
 			2, observationVal, observations_sz, timer_sequentialize, timer_sequentialize_sz,
 			"initCostmap_task");
-	__hpvm__hint(DEVICE); 
+	__hpvm__hint(FPGA_TARGET); 
 #endif
 		{
 			*timer_sequentialize = 1;
 #ifdef INT_TIME
-			// gettimeofday(&ocgr_c2g_total_start, NULL); // See note above this function for why this call was commented out
 			gettimeofday(&ocgr_c2g_initCM_start, NULL);
 #endif
 			double robot_x = lidar_inputs->odometry[0];
 			double robot_y = lidar_inputs->odometry[1];
 			double robot_z = lidar_inputs->odometry[2];
 
-			initCostmap(observationVal, *rolling_window, *min_obstacle_height, *max_obstacle_height, *raytrace_range,
-				*size_x, *size_y, *resolution, robot_x, robot_y, robot_z);
+			unsigned int x_dim = *size_x;
+			unsigned int y_dim = *size_y;
+
+#if !defined(INLINE)
+			initCostmap(observationVal, rolling_window, min_obstacle_height, max_obstacle_height, 
+					raytrace_range, size_x, size_y, resolution, robot_x, robot_y, robot_z);
+#else
+			size_t terminationCondition;
+
+       observationVal->rolling_window = *rolling_window; //TODO:
+      observationVal->min_obstacle_height = *min_obstacle_height; //TODO:
+      observationVal->max_obstacle_height = *max_obstacle_height; //TODO:
+      observationVal->raytrace_range = *raytrace_range; //TODO:
+
+      observationVal->master_costmap.cell_size = *resolution;
+      observationVal->master_costmap.x_dim = x_dim;
+      observationVal->master_costmap.y_dim = y_dim;
+      observationVal->master_costmap.default_value = CMV_NO_INFORMATION; // default_value;
+
+      observationVal->master_costmap.av_x = robot_x;
+      observationVal->master_costmap.av_y = robot_y;
+      observationVal->master_costmap.av_z = robot_z;
+
+      observationVal->master_resolution = *resolution;
+
+      observationVal->master_origin.x = robot_x - (x_dim - 1) / 2;
+      observationVal->master_origin.y = robot_y - (y_dim - 1) / 2;
+      observationVal->master_origin.z = robot_z;
+
+      terminationCondition = x_dim * y_dim;
+      terminationCondition = terminationCondition / ((*resolution) * (*resolution));
+
+      // x_dim = GRID_MAP_X_DIM = 100
+      // y_dim = GRID_MAP_Y_DIM = 100
+      // resolution = GRID_MAP_RESLTN = 2
+      for (size_t i = 0; i < terminationCondition; ++i) {
+//        __hpvm__isNonZeroLoop(i, 2500);
+        observationVal->master_costmap.costmap[i] = CMV_NO_INFORMATION;
+      }
+#endif // end if defined(NO_INLINE)
+
 #ifdef INT_TIME
 			gettimeofday(&ocgr_c2g_initCM_stop, NULL);
 			ocgr_c2g_initCM_sec += ocgr_c2g_initCM_stop.tv_sec - ocgr_c2g_initCM_start.tv_sec;
@@ -3035,7 +3074,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 #if (defined(HPVM) && defined(HPVM_PROCESS_LIDAR_INTERNAL)) && true
 		void * T3_cloudToOccgrid_Task = __hetero_task_begin(3, observationVal, observations_sz, lidar_inputs, lidarin_sz,
 			AVxyzw, AVxyzw_sz, 1, observationVal, observations_sz, "updateBounds_task");
-	__hpvm__hint(DEVICE);
+//	__hpvm__hint(DEVICE);
 #endif
 		{
 #ifdef INT_TIME
@@ -3379,6 +3418,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 							msg_stream_imag[i] = 0.0;
 						}
 						int terminationCondition = (*pckt_hdr_len);
+						printf("ERA FOR: line %d, file %s terminationCondition = %d\n", __LINE__, __FILE__, terminationCondition);
 						for (int i = 0; i < terminationCondition; i++) {
 							msg_stream_real[msg_idx] = bpsk_chunks2sym(pckt_hdr_out[i]);
 							msg_stream_imag[msg_idx] = 0.0;
@@ -3386,6 +3426,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 						}
 						//  printf("\n");
 						int mapper_payload_size_cp = d_frame->n_encoded_bits; // HPVM: Copied from T3 (as d_frame was not modified by T3)
+						printf("ERA FOR: line %d, file %s mapper_payload_size_cp = %d\n", __LINE__, __FILE__, mapper_payload_size_cp);
 						for (int i = 0; i < mapper_payload_size_cp; i++) {
 							msg_stream_real[msg_idx] = bpsk_chunks2sym(d_map_out[i]);
 							msg_stream_imag[msg_idx] = 0.0;
@@ -3427,6 +3468,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 									}
 									//  printf("\n");
 									int mapper_payload_size_cp = d_frame->n_encoded_bits; // HPVM: Copied from T3 (as d_frame was not modified by T3)
+									printf("ERA FOR: line %d, file %s mapper_payload_size_cp = %d\n", __LINE__, __FILE__, mapper_payload_size_cp);
 									for (int i = 0; i < mapper_payload_size_cp; i++) {
 										msg_stream_real[msg_idx] = bpsk_chunks2sym(d_map_out[i]);
 										msg_stream_imag[msg_idx] = 0.0;
@@ -3509,38 +3551,6 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 						x_ocaralloc_sec += x_ocaralloc_stop.tv_sec - x_ocaralloc_start.tv_sec;
 						x_ocaralloc_usec += x_ocaralloc_stop.tv_usec - x_ocaralloc_start.tv_usec;
 #endif
-
-#if false
-
-									// DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n", 520, 24576));
-									DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u, msg_stream)\n",
-												d_frame->n_sym, d_frame->n_encoded_bits));
-
-									// float ofdm_car_str_real[ofdm_max_out_size];
-									// float ofdm_car_str_imag[ofdm_max_out_size];
-
-									DO_NUM_IOS_ANALYSIS(printf("Calling do_ofdm_carrier_alloc: IN n_sym %u n_enc_bits %u\n", d_frame->n_sym,
-												d_frame->n_encoded_bits));
-									// int ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(520, 24576, msg_stream_real, msg_stream_imag, ofdm_car_str_real, ofdm_car_str_imag);
-#ifdef INT_TIME
-									gettimeofday(&x_ocaralloc_start, NULL);
-#endif
-									* ofc_res = do_ofdm_carrier_allocator_cvc_impl_work(d_frame->n_sym, d_frame->n_encoded_bits,
-											msg_stream_real, msg_stream_imag, ofdm_car_str_real, ofdm_car_str_imag);
-									DO_NUM_IOS_ANALYSIS(printf("Back from do_ofdm_carrier_alloc: OUT ofc_res %u : %u max outputs (of %u)\n", ofc_res,
-												ofc_res * d_fft_len, ofdm_max_out_size));
-									DEBUG(printf(" return value was %u so max %u outputs\n", *ofc_res, (*ofc_res) * d_fft_len); printf(" do_ofdm_carrier_allocator_cvc_impl_work output:\n");
-											for (int ti = 0; ti < ((*ofc_res) * 64); ti++) {
-											printf("  ofdm_car %6u : %9.6f + %9.6f i\n", ti, ofdm_car_str_real[ti], ofdm_car_str_imag[ti]);
-											});
-
-#ifdef INT_TIME
-									gettimeofday(&x_ocaralloc_stop, NULL);
-									x_ocaralloc_sec += x_ocaralloc_stop.tv_sec - x_ocaralloc_start.tv_sec;
-									x_ocaralloc_usec += x_ocaralloc_stop.tv_usec - x_ocaralloc_start.tv_usec;
-#endif
-
-#endif // if false
 
 #if defined(HPVM)
 									__hetero_task_end(T5);
@@ -3634,6 +3644,8 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 		// We also SCALE it here (but we should be able to do that in the HWR Accel later)
 		{ // scope for jidx
 			int jidx = 0;
+			printf("ERA FOR: line %d file %s term: %d\n", __LINE__, __FILE__, (n_inputs + (size - 1)));
+			printf("ERA FOR: line %d file %s size: %d\n", __LINE__, __FILE__, size);
 			for (int k = 0; k < (n_inputs + (size - 1)); k += size) {
 				for (int i = 0; i < size; i++) {
 					xmit_fftHW_li_mem[fn][jidx++] = float2fx(ofdm_car_str_real[k + i] * scale, FX_IL); // NOTE: when we enable scale is HW remove it from here.
@@ -3671,6 +3683,8 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 #ifdef INT_TIME
 			gettimeofday(&(x_fHcvtout_start), NULL);
 #endif // INT_TIME
+			printf("ERA FOR: line %d file %s term: %d\n", __LINE__, __FILE__, (n_inputs + (size - 1)));
+			printf("ERA FOR: line %d file %s size: %d\n", __LINE__, __FILE__, size);
 			{ // scope for jidx
 				int jidx = 0;
 				for (int k = 0; k < (n_inputs + (size - 1)); k += size) {
@@ -3952,7 +3966,7 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 											final_out_imag, final_out_imag_sz, "padding_task_wrapper");
 #endif
 #if defined(HPVM)
-						__hpvm__hint(DEVICE);
+						__hpvm__hint(FPGA_TARGET);
 #endif
 
 
@@ -3970,61 +3984,12 @@ void lidar_root(lidar_inputs_t * lidar_inputs, size_t lidarin_sz /*=sizeof( * li
 							final_out_real[i] = 0.0;
 							final_out_imag[i] = 0.0;
 						}
-						for (int i = 0; i < num_cycpref_outs_cp; i++) {
+						for (size_t i = 0; i < num_cycpref_outs_cp; i++) {
+							__hpvm__noUnroll(i);
 							int iidx = num_pre_pad + i;
 							final_out_real[iidx] = cycpref_out_real[i];
 							final_out_imag[iidx] = cycpref_out_imag[i];
 						}
-#if false
-
-									int num_cycpref_outs_cp = (*ofc_res) * (d_fft_len + d_cp_size) + 1; // copied from above task
-									// The next "stage" is the "packet_pad2" which adds 500 zeros to the front (and no zeros to the rear) of the output
-									//   This block may also add some time-stamp tags (for UHD?) for GnuRadio use?
-									//   Not sure we care about this padding?
-									bool do_add_pre_pad = false;
-									DEBUG(printf("\nAdd the pre-padding : %u\n", do_add_pre_pad));
-									int num_pre_pad = do_add_pre_pad ? 500 : 0;
-									int num_post_pad = 0;
-									DEBUG(printf("\n"));
-
-									// Now set the Final Outputs
-									DEBUG(printf("\nFinal XMIT output:\n"));
-									*num_final_outs = num_pre_pad + num_cycpref_outs_cp + num_post_pad;
-									DO_NUM_IOS_ANALYSIS(printf("Set num_finalouts to %u = pre-pad %u + %u num_cycpref_outs\n",
-												*num_final_outs, num_pre_pad, num_cycpref_outs_cp));
-									for (int i = 0; i < num_pre_pad; i++) {
-										final_out_real[i] = 0.0;
-										final_out_imag[i] = 0.0;
-										DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", i, final_out_real[i], final_out_imag[i]));
-									}
-									for (int i = 0; i < num_cycpref_outs_cp; i++) {
-										int iidx = num_pre_pad + i;
-										final_out_real[iidx] = cycpref_out_real[i];
-										final_out_imag[iidx] = cycpref_out_imag[i];
-										DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", iidx, final_out_real[iidx], final_out_imag[iidx]));
-									}
-									/* for (int i = 0; i < num_post_pad; i++) { */
-									/*   int iidx = num_pre_pad + num_cycpref_outs_cp + i; */
-									/*   final_out_real[iidx] = 0.0; */
-									/*   final_out_imag[iidx] = 0.0; */
-									/*   DEBUG(printf(" fin_xmit_out %6u : %11.8f + %11.8f i\n", iidx, final_out_real[iidx], final_out_imag[iidx])); */
-									/* } */
-									// These next stages do not appear to have any relationship to a physical system that we might consider accelerating.
-
-									// The next "Stage" is the "throttle" block, which does not alter the output/message (just timing?)
-
-									// Then there is the channel_model...
-
-#ifdef INT_TIME
-									// The time take by the whole function can't be measure from within the function (as doing so would
-									// mean the calls to gettimeofday must be put in tasks which would then run in parallel with the rest
-									// of the tasks in this function). The caller of this function must measure the time taken.
-									// gettimeofday(&x_pipe_stop, NULL);
-									// x_pipe_sec  += x_pipe_stop.tv_sec  - x_pipe_start.tv_sec;
-									// x_pipe_usec += x_pipe_stop.tv_usec - x_pipe_start.tv_usec;
-#endif
-
-#endif // if false
 
 #if defined(HPVM)
 									__hetero_task_end(T8);
@@ -4575,6 +4540,7 @@ int main(int argc, char * argv[]) {
 				);
 #endif
 
+			/*
 			printf("%s %d Calling transmit occgrid \n", __FILE__, __LINE__);
 			printf("n_xmit_out: %d\n", n_xmit_out);
 			printf("xmit_out_real:");
@@ -4587,6 +4553,7 @@ int main(int argc, char * argv[]) {
 				printf("%f", xmit_out_imag[i]);
 			}
 			printf("\n");
+			*/
 
 
 			// Send the occgrid through the socket

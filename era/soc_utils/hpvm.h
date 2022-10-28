@@ -128,7 +128,9 @@ void llvm_hpvm_track_mem(void *, size_t) noexcept;
 void llvm_hpvm_untrack_mem(void *) noexcept;
 void llvm_hpvm_request_mem(void *, size_t) noexcept;
 
-void __hpvm__isNonZeroLoop(long, ...) noexcept;
+void __hpvm__isNonZeroLoop(size_t, int) noexcept;
+void __hpvm__noUnroll(size_t) noexcept;
+
 
 #ifdef __cplusplus
 }
