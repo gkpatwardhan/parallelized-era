@@ -234,7 +234,7 @@ void initCostmap(Observation* obs_ptr, bool rolling_window, double min_obstacle_
 	obs_ptr->master_origin.z = robot_z;
 
 	int terminationCondition =  obs_ptr->master_costmap.x_dim * obs_ptr->master_costmap.y_dim / (obs_ptr->master_resolution * obs_ptr->master_resolution);
-//	memset(obs_ptr->master_costmap.costmap, CMV_NO_INFORMATION, terminationCondition);
+	//memset(obs_ptr->master_costmap.costmap, CMV_NO_INFORMATION, terminationCondition);
 	for (int i = 0; i < terminationCondition; ++i) {
 		obs_ptr->master_costmap.costmap[i] = CMV_NO_INFORMATION; // obs_ptr->master_costmap.default_value;
 	}
