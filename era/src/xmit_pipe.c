@@ -363,9 +363,7 @@ void generate_mac_data_frame(const char * msdu, int msdu_size, int * psdu_size, 
 
 	header -> seq_nr = 0;
 	for (int i = 0; i < 12; i++) {
-		if ((*d_seq_nr) & (1 << i)) {
-			header -> seq_nr |= (1 << (i + 4));
-		}
+		header -> seq_nr |= (1 << (i + 4)) * (!!((*d_seq_nr) & (1 << i)));
 	 //printf("Current d_seq_nr %d \n", *d_seq_nr);
 	}
 	//printf("Modified header based on d_seq_nr (%d)\n", *d_seq_nr);
@@ -381,14 +379,14 @@ void generate_mac_data_frame(const char * msdu, int msdu_size, int * psdu_size, 
 	//copy mac header into psdu
 	//memcpy(d_psdu, &header, 24);
 	//copy msdu into psdu
-	//memcpy(d_psdu + 24, msdu, msdu_size);
+	memcpy(d_psdu + 24, msdu, msdu_size);
 	//printf("Msdu_size: %d \n", msdu_size);
 	//printf("d_psdu: %p\n", d_psdu);
-	for (int i = 0; i < msdu_size; i++) {
+	/*for (int i = 0; i < msdu_size; i++) {
 	//	printf("msdu[%d] = %d\n", i,  msdu[i]);
 	//	printf("d_psdu[%d] = %d\n", i+24, d_psdu[i + 24]);
 		d_psdu[i + 24] = msdu[i];
-	}
+	}*/
 	//printf("Updated d_psdu\n");
 
 	DEBUG({

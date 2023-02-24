@@ -661,18 +661,19 @@ void copyMapRegion(Observation* obs_ptr, unsigned char* source_map,
 	unsigned int cell_y_dim = obs_ptr->master_costmap.y_dim / obs_ptr->master_resolution;
 	unsigned int cell_minus_region_x_dim = (cell_x_dim - region_x_dim) * (obs_ptr->master_costmap.x_dim != region_x_dim);
 	unsigned int cell_minus_region_y_dim = (cell_y_dim - region_y_dim) * (obs_ptr->master_costmap.x_dim != region_x_dim);
+	unsigned int cell_x_y_dim = cell_x_dim * cell_y_dim;
 
 	//printf("\n Copying Map... \nRegion Size of Map -> <%d, %d>\n", region_x_dim, region_y_dim);
 	//char local_costmap [cell_x_dim * cell_y_dim]; // HPVM: original code
 	char local_costmap [(COST_MAP_X_DIM * COST_MAP_Y_DIM)];
-	for (int i = 0; i < cell_x_dim * cell_y_dim; i++) {
+	for (int i = 0; i < cell_x_y_dim; i++) {
 		local_costmap[i] = CMV_NO_INFORMATION; // obs_ptr->master_costmap.default_value;
 		//printf("%d, ", local_costmap[i]);
 	}
 
 	// now, we'll copy the source map into the destination map
-	for (unsigned int i = 0; i < region_y_dim; ++i){
-		for (unsigned int j = 0; j < region_x_dim; j++) {
+	for (int i = 0; i < region_y_dim; ++i){
+		for (int j = 0; j < region_x_dim; j++) {
 			//printf("Source Map Value at Index <%d> = %d\n", sm_index, obs_ptr->master_costmap.costmap[sm_index]);
 			/*CHECK(if (dm_index >= COST_MAP_ENTRIES) {
 					printf("ERROR : copyMapRegion : dm_index is too large at = %d vs %d\n", dm_index, COST_MAP_ENTRIES);
@@ -680,13 +681,10 @@ void copyMapRegion(Observation* obs_ptr, unsigned char* source_map,
 					if (sm_index >= COST_MAP_ENTRIES) {
 					printf("ERROR : copyMapRegion : sm_index is too large at = %d vs %d\n", sm_index, COST_MAP_ENTRIES);
 					});*/
-			local_costmap[dm_index] = obs_ptr->master_costmap.costmap[sm_index];
+			local_costmap[dm_index + i * cell_minus_region_y_dim + j] = 
+				obs_ptr->master_costmap.costmap[sm_index + i * cell_minus_region_x_dim + j];
 			//printf("dm_index, sm_index = %d, %d\n", dm_index, sm_index);
-			sm_index++;
-			dm_index++;
 		}
-		sm_index += cell_minus_region_x_dim;
-		dm_index += cell_minus_region_y_dim;
 		//memcpy(dm_index, sm_index, region_x_dim * sizeof(unsigned char*));
 	}
 
@@ -696,7 +694,7 @@ void copyMapRegion(Observation* obs_ptr, unsigned char* source_map,
 			if (chkMaxIdx > COST_MAP_ENTRIES) {
 			printf("ERROR : copyMapRegion : Max index is too large at %d vs %d\n", chkMaxIdx, COST_MAP_ENTRIES);
 			});*/
-	for (int i = 0; i < cell_x_dim * cell_y_dim; i++) {
+	for (int i = 0; i < cell_x_y_dim; i++) {
 		obs_ptr->master_costmap.costmap[i] = local_costmap[i];
 	}
 }

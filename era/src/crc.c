@@ -54,29 +54,14 @@
  *
  *********************************************************************/
 static unsigned long
-reflect(unsigned long data, unsigned char nBits)
+reflect(unsigned long x, unsigned char bits)
 {
-  unsigned long  reflection = 0x00000000;
-  unsigned char  bit;
-
-  /*
-   * Reflect the data about the center bit.
-   */
-  for (bit = 0; bit < nBits; ++bit)
-    {
-      /*
-       * If the LSB bit is set, set the reflection of it.
-       */
-      if (data & 0x01)
-	{
-	  reflection |= (1 << ((nBits - 1) - bit));
-	}
-
-      data = (data >> 1);
-    }
-
-  return (reflection);
-
+	x = ((x & 0x55555555) << 1) | ((x & 0xAAAAAAAA) >> 1); // Swap _<>_
+	x = ((x & 0x33333333) << 2) | ((x & 0xCCCCCCCC) >> 2); // Swap __<>__
+	x = ((x & 0x0F0F0F0F) << 4) | ((x & 0xF0F0F0F0) >> 4); // Swap ____<>____
+	x = ((x & 0x00FF00FF) << 8) | ((x & 0xFF00FF00) >> 8); // Swap ...
+	x = ((x & 0x0000FFFF) << 16) | ((x & 0xFFFF0000) >> 16); // Swap ...
+	return x >> (32 - bits);
 }	/* reflect() */
 
 
@@ -212,16 +197,13 @@ crc
 crcFast(unsigned char const message[], int nBytes, crc* crcTable)
 {
   crc	           remainder = INITIAL_REMAINDER;
-  unsigned char  data;
-  int            byte;
-
 
   /*
    * Divide the message by the polynomial, a byte at a time.
    */
-  for (byte = 0; byte < nBytes; ++byte)
+  for (int byte = 0; byte < nBytes; ++byte)
     {
-      data = REFLECT_DATA(message[byte]) ^ (remainder >> (WIDTH - 8));
+      unsigned char data = REFLECT_DATA(message[byte]) ^ (remainder >> (WIDTH - 8));
       remainder = crcTable[data] ^ (remainder << 8);
     }
 
