@@ -659,6 +659,8 @@ void copyMapRegion(Observation* obs_ptr, unsigned char* source_map,
 
 	unsigned int cell_x_dim = obs_ptr->master_costmap.x_dim / obs_ptr->master_resolution;
 	unsigned int cell_y_dim = obs_ptr->master_costmap.y_dim / obs_ptr->master_resolution;
+	unsigned int cell_minus_region_x_dim = (cell_x_dim - region_x_dim) * (obs_ptr->master_costmap.x_dim != region_x_dim);
+	unsigned int cell_minus_region_y_dim = (cell_y_dim - region_y_dim) * (obs_ptr->master_costmap.x_dim != region_x_dim);
 
 	//printf("\n Copying Map... \nRegion Size of Map -> <%d, %d>\n", region_x_dim, region_y_dim);
 	//char local_costmap [cell_x_dim * cell_y_dim]; // HPVM: original code
@@ -683,10 +685,8 @@ void copyMapRegion(Observation* obs_ptr, unsigned char* source_map,
 			sm_index++;
 			dm_index++;
 		}
-		if (obs_ptr->master_costmap.x_dim != region_x_dim) {
-			sm_index = sm_index + (obs_ptr->master_costmap.x_dim / obs_ptr->master_resolution - region_x_dim);
-			dm_index = dm_index + (obs_ptr->master_costmap.x_dim / obs_ptr->master_resolution - region_x_dim);
-		}
+		sm_index += cell_minus_region_x_dim;
+		dm_index += cell_minus_region_y_dim;
 		//memcpy(dm_index, sm_index, region_x_dim * sizeof(unsigned char*));
 	}
 
