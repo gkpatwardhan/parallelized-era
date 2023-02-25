@@ -147,11 +147,9 @@ bit_reverse (float * w, unsigned int N, unsigned int bits)
 int
 fft(float * data, unsigned int N, unsigned int logn, int sign, int shift)
 {
-  unsigned int transform_length;
-  unsigned int a, b, i, j, bit;
   float theta, t_real, t_imag, w_real, w_imag, s, t, s2, z_real, z_imag;
 
-  transform_length = 1;
+  unsigned int transform_length = 1;
 
   /* bit reversal */
 #ifdef INT_TIME
@@ -166,7 +164,7 @@ fft(float * data, unsigned int N, unsigned int logn, int sign, int shift)
 
   /* calculation */
   //printf("\nSTART,A,B,I,J,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n", "2*j", "Data", "2*j+1", "Data", "2*i", "Data", "2*i+1", "Data", "t_real", "t_imag");
-  for (bit = 0; bit < logn; bit++) {
+  for (unsigned int bit = 0; bit < logn; bit++) {
     w_real = 1.0;
     w_imag = 0.0;
 
@@ -176,10 +174,12 @@ fft(float * data, unsigned int N, unsigned int logn, int sign, int shift)
     t = sin (0.5 * theta);
     s2 = 2.0 * t * t;
 
-    for (a = 0; a < transform_length; a++) {
-      for (b = 0; b < N; b += 2 * transform_length) {
-	i = b + a;
-	j = b + a + transform_length;
+    for (unsigned int a = 0; a < transform_length; a++) {
+      unsigned int transform_length_2 = 2 * transform_length;
+      unsigned int bound = (N + transform_length_2 - 1) / transform_length_2;
+      for (unsigned int b = 0; b < bound; b += 1) {
+	unsigned int i = transform_length_2 * b + a;
+	unsigned int j = transform_length_2 * b + a + transform_length;
 
 	z_real = data[2*j  ];
 	z_imag = data[2*j+1];
@@ -257,12 +257,10 @@ bit_reverse_ri (float * rw, float * iw, unsigned int N, unsigned int bits)
 /* This version takes in an array of reals, and an array of imaginaries */
 int
 fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, unsigned int logn) {
-  unsigned int transform_length;
-  unsigned int a, b, i, j, bit;
   float theta, t_real, t_imag, w_real, w_imag, s, t, s2, z_real, z_imag;
   int sign = (inverse ? 1 : -1);
 
-  transform_length = 1;
+  unsigned int transform_length = 1;
 
   /* bit reversal */
 #ifdef INT_TIME
@@ -276,7 +274,7 @@ fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, uns
 #endif
 
   /* calculation */
-  for (bit = 0; bit < logn; bit++) {
+  for (unsigned bit = 0; bit < logn; bit++) {
     w_real = 1.0;
     w_imag = 0.0;
 
@@ -286,10 +284,12 @@ fft_ri(float * rdata, float * idata, int inverse, int shift, unsigned int N, uns
     t = sin (0.5 * theta);
     s2 = 2.0 * t * t;
 
-    for (a = 0; a < transform_length; a++) {
-      for (b = 0; b < N; b += 2 * transform_length) {
-	i = b + a;
-	j = b + a + transform_length;
+    for (unsigned int a = 0; a < transform_length; a++) {
+      unsigned int transform_length_2 = 2 * transform_length;
+      unsigned int bound = (N + transform_length_2 - 1) / transform_length_2;
+      for (unsigned int b = 0; b < bound; b += 1) {
+	unsigned int i = transform_length_2 * b + a;
+	unsigned int j = transform_length_2 * b + a + transform_length;
 
 	z_real = rdata[j];
 	z_imag = idata[j];
