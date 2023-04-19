@@ -31,6 +31,7 @@
 //#define COLLAPSE_NODES
 #define DEVICE CPU_TARGET
 #endif
+//#define PRINT_BYTES
 
 #include "cv_toolset.h"
 #include "debug.h"
@@ -2901,6 +2902,23 @@ void lidar_root(
         timer_sequentialize_sz, "initCostmap_task");
     __hpvm__hint(DEVICE);
 #endif
+#ifdef PRINT_BYTES
+    printf("initCostmap_task:\n");
+    printf("Inputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
+    printf("lidar_inputs: %zu\n", lidarin_sz);
+    printf("rolling_window: %zu\n", rolling_window_sz);
+    printf("min_obstacle_height: %zu\n", min_obstacle_height_sz);
+    printf("max_obstacle_height: %zu\n", max_obstacle_height_sz);
+    printf("raytrace_range: %zu\n", raytrace_range_sz);
+    printf("size_x: %zu\n", size_x_sz);
+    printf("size_y: %zu\n", size_y_sz);
+    printf("resolution: %zu\n", resolution_sz);
+    printf("timer_sequentialize: %zu\n", timer_sequentialize_sz);
+    printf("Outputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
+    printf("timer_sequentialize: %zu\n", timer_sequentialize_sz);
+#endif
     {
       *timer_sequentialize = 1;
 #ifdef INT_TIME
@@ -2932,6 +2950,14 @@ void lidar_root(
         2, observationVal, observations_sz, lidar_inputs, lidarin_sz, 1,
         observationVal, observations_sz, "updateOrigin_task");
     __hpvm__hint(DEVICE);
+#endif
+#ifdef PRINT_BYTES
+    printf("updateOrigin_task:\n");
+    printf("Inputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
+    printf("lidar_inputs: %zu\n", lidarin_sz);
+    printf("Outputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
 #endif
 
     {
@@ -2974,6 +3000,15 @@ void lidar_root(
         3, observationVal, observations_sz, lidar_inputs, lidarin_sz, AVxyzw,
         AVxyzw_sz, 1, observationVal, observations_sz, "updateBounds_task");
     __hpvm__hint(CPU_TARGET);
+#endif
+#ifdef PRINT_BYTES
+    printf("updateBounds_task:\n");
+    printf("Inputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
+    printf("lidar_inputs: %zu\n", lidarin_sz);
+    printf("AVxyzw: %zu\n", AVxyzw_sz);
+    printf("Outputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
 #endif
     {
 #ifdef INT_TIME
@@ -3037,6 +3072,20 @@ void lidar_root(
   __hpvm__hint(CPU_TARGET);
   // This task is not being placed on the fpga as it does weird pointer
   // arithemetic which causes issues with hpvm
+#endif
+#ifdef PRINT_BYTES
+    printf("compressMap_task:\n");
+    printf("Inputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
+    printf("n_cmp_bytes: %zu\n", n_cmp_bytes_sz);
+    printf("cmp_data: %zu\n", cmp_data_sz);
+    printf("next_obs_cp: %zu\n", next_obs_cp_sz);
+    printf("curr_obs_cp: %zu\n", curr_obs_cp_sz);
+    printf("lmap_count_cp: %zu\n", lmap_count_cp_sz);
+    printf("Outputs:\n");
+    printf("observationVal: %zu\n", observations_sz);
+    printf("n_cmp_bytes: %zu\n", n_cmp_bytes_sz);
+    printf("cmp_data: %zu\n", cmp_data_sz);
 #endif
 
   printf("%s %d In T2", __FILE__, __LINE__);
@@ -3148,6 +3197,21 @@ void lidar_root(
       crcTable, crcTable_sz, "mac_data_task_wrapper");
   __hpvm__hint(DEVICE);
 #endif
+#ifdef PRINT_BYTES
+    printf("mac_data_task_wrapper:\n");
+    printf("Inputs:\n");
+    printf("in_msg_len: %zu\n", in_msg_len_sz);
+    printf("in_msg: %zu\n", in_msg_sz);
+    printf("psdu_len: %zu\n", psdu_len_sz);
+    printf("d_psdu: %zu\n", d_psdu_size);
+    printf("d_seq_nr: %zu\n", d_seq_nr_sz);
+    printf("crcTable: %zu\n", crcTable_sz);
+    printf("Outputs:\n");
+    printf("psdu_len: %zu\n", psdu_len_sz);
+    printf("d_psdu: %zu\n", d_psdu_size);
+    printf("d_seq_nr: %zu\n", d_seq_nr_sz);
+    printf("crcTable: %zu\n", crcTable_sz);
+#endif
   *psdu_len = 0;
   generate_mac_data_frame(in_msg, *in_msg_len, psdu_len, d_psdu, d_psdu_size,
                           d_seq_nr, d_seq_nr_sz, crcTable, crcTable_sz);
@@ -3177,6 +3241,33 @@ void lidar_root(
 
 #if defined(HPVM)
   __hpvm__hint(DEVICE);
+#endif
+#ifdef PRINT_BYTES
+    printf("mapper_task_wrapper:\n");
+    printf("Inputs:\n");
+    printf("pckt_hdr_out: %zu\n", pckt_hdr_out_sz);
+    printf("psdu_len: %zu\n", psdu_len_sz);
+    printf("pckt_hdr_len: %zu\n", pckt_hdr_len_sz);
+    printf("d_psdu: %zu\n", d_psdu_size);
+    printf("d_map_out: %zu\n", d_map_out_sz);
+    printf("d_scrambler: %zu\n", d_scrambler_sz);
+    printf("d_symbols: %zu\n", d_symbols_sz);
+    printf("d_symbols_offset: %zu\n", d_symbols_offset_sz);
+    printf("d_symbols_len: %zu\n", d_symbols_len_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
+    printf("Outputs:\n");
+    printf("pckt_hdr_out: %zu\n", pckt_hdr_out_sz);
+    printf("psdu_len: %zu\n", psdu_len_sz);
+    printf("pckt_hdr_len: %zu\n", pckt_hdr_len_sz);
+    printf("d_scrambler: %zu\n", d_scrambler_sz);
+    printf("d_symbols: %zu\n", d_symbols_sz);
+    printf("d_symbols_offset: %zu\n", d_symbols_offset_sz);
+    printf("d_symbols_len: %zu\n", d_symbols_len_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
+    printf("d_psdu: %zu\n", d_psdu_size);
+    printf("d_map_out: %zu\n", d_map_out_sz);
 #endif
 #ifdef INT_TIME
   gettimeofday(&x_domapwk_start, NULL);
@@ -3211,6 +3302,19 @@ void lidar_root(
 #endif
 #if defined(HPVM)
   __hpvm__hint(CPU_TARGET); // TODO: Put on FPGA
+#endif
+#ifdef PRINT_BYTES
+    printf("packer_hdr_task_wrapper:\n");
+    printf("Inputs:\n");
+    printf("pckt_hdr_out: %zu\n", pckt_hdr_out_sz);
+    printf("pckt_hdr_len: %zu\n", pckt_hdr_len_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
+    printf("Outputs:\n");
+    printf("pckt_hdr_out: %zu\n", pckt_hdr_out_sz);
+    printf("pckt_hdr_len: %zu\n", pckt_hdr_len_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
 #endif
 #if defined(INT_TIME) && !defined(HPVM)
   gettimeofday(&x_phdrgen_start, NULL);
@@ -3252,6 +3356,23 @@ void lidar_root(
 #if defined(HPVM)
   __hpvm__hint(DEVICE);
 
+#endif
+#ifdef PRINT_BYTES
+    printf("chunk_strm_task_wrapper:\n");
+    printf("Inputs:\n");
+    printf("pckt_hdr_out: %zu\n", pckt_hdr_out_sz);
+    printf("pckt_hdr_len: %zu\n", pckt_hdr_len_sz);
+    printf("msg_stream_real: %zu\n", msg_stream_real_sz);
+    printf("msg_stream_imag: %zu\n", msg_stream_imag_sz);
+    printf("d_map_out: %zu\n", d_map_out_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
+    printf("Outputs:\n");
+    printf("msg_stream_real: %zu\n", msg_stream_real_sz);
+    printf("msg_stream_imag: %zu\n", msg_stream_imag_sz);
+    printf("d_map_out: %zu\n", d_map_out_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
 #endif
 
   // Convert the header chunks to symbols (uses simple BPSK_1_2 map: 0 -> -1+0i
@@ -3373,6 +3494,26 @@ void lidar_root(
 #if defined(HPVM)
   __hpvm__hint(DEVICE);
 #endif
+#ifdef PRINT_BYTES
+    printf("carrier_alloc_task_wrapper:\n");
+    printf("Inputs:\n");
+    printf("msg_stream_real: %zu\n", msg_stream_real_sz);
+    printf("msg_stream_imag: %zu\n", msg_stream_imag_sz);
+    printf("ofdm_car_str_real: %zu\n", ofdm_car_str_real_sz);
+    printf("ofdm_car_str_imag: %zu\n", ofdm_car_str_imag_sz);
+    printf("ofc_res: %zu\n", ofc_res_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
+    printf("d_pilot_carriers: %zu\n", d_pilot_carriers_sz);
+    printf("d_occupied_carriers: %zu\n", d_occupied_carriers_sz);
+    printf("Outputs:\n");
+    printf("ofdm_car_str_real: %zu\n", ofdm_car_str_real_sz);
+    printf("ofdm_car_str_imag: %zu\n", ofdm_car_str_imag_sz);
+    printf("d_ofdm: %zu\n", d_ofdm_sz);
+    printf("d_frame: %zu\n", d_frame_sz);
+    printf("d_pilot_carriers: %zu\n", d_pilot_carriers_sz);
+    printf("ofc_res: %zu\n", ofc_res_sz);
+#endif
 
   // DEBUG(printf("\nCalling do_ofdm_carrier_allocator_cvc_impl_work( %u, %u,
   // msg_stream)\n", 520, 24576));
@@ -3477,6 +3618,18 @@ void lidar_root(
 
 #if defined(HPVM)
   __hpvm__hint(DEVICE);
+#endif
+#ifdef PRINT_BYTES
+    printf("xmit_fft_task:\n");
+    printf("Inputs:\n");
+    printf("ofc_res: %zu\n", ofc_res_sz);
+    printf("ofdm_car_str_real: %zu\n", ofdm_car_str_real_sz);
+    printf("ofdm_car_str_imag: %zu\n", ofdm_car_str_imag_sz);
+    printf("fft_out_real: %zu\n", fft_out_real_sz);
+    printf("fft_out_imag: %zu\n", fft_out_imag_sz);
+    printf("Outputs:\n");
+    printf("fft_out_real: %zu\n", fft_out_real_sz);
+    printf("fft_out_imag: %zu\n", fft_out_imag_sz);
 #endif
   {
     int n_inputs = (*ofc_res) * d_fft_len; // max is ofdm_max_out_size
@@ -3814,6 +3967,18 @@ void lidar_root(
 #if defined(HPVM)
   __hpvm__hint(DEVICE);
 #endif
+#ifdef PRINT_BYTES
+    printf("cyclic_prefix_task_wrapper:\n");
+    printf("Inputs:\n");
+    printf("ofc_res: %zu\n", ofc_res_sz);
+    printf("fft_out_real: %zu\n", fft_out_real_sz);
+    printf("fft_out_imag: %zu\n", fft_out_imag_sz);
+    printf("cycpref_out_real: %zu\n", cycpref_out_real_sz);
+    printf("cycpref_out_imag: %zu\n", cycpref_out_imag_sz);
+    printf("Outputs:\n");
+    printf("cycpref_out_real: %zu\n", cycpref_out_real_sz);
+    printf("cycpref_out_imag: %zu\n", cycpref_out_imag_sz);
+#endif
 
   //#include "gold_fft_outputs.c"
 
@@ -3897,6 +4062,20 @@ void lidar_root(
 #endif
 #if defined(HPVM)
   __hpvm__hint(DEVICE);
+#endif
+#ifdef PRINT_BYTES
+    printf("padding_task_wrapper:\n");
+    printf("Inputs:\n");
+    printf("num_final_outs: %zu\n", num_final_outs_sz);
+    printf("final_out_real: %zu\n", final_out_real_sz);
+    printf("final_out_imag: %zu\n", final_out_imag_sz);
+    printf("cycpref_out_real: %zu\n", cycpref_out_real_sz);
+    printf("cycpref_out_imag: %zu\n", cycpref_out_imag_sz);
+    printf("ofc_res: %zu\n", ofc_res_sz);
+    printf("Outputs:\n");
+    printf("num_final_outs: %zu\n", num_final_outs_sz);
+    printf("final_out_real: %zu\n", final_out_real_sz);
+    printf("final_out_imag: %zu\n", final_out_imag_sz);
 #endif
 
   int num_cycpref_outs_cp =
